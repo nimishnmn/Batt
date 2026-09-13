@@ -13,6 +13,7 @@ struct BattApp: App {
         WindowGroup("Batt - Battery Intelligence", id: "main") {
             DashboardView(appState: appState, settings: settings)
                 .preferredColorScheme(settings.theme.colorScheme)
+                .background(WindowAccessor())
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
@@ -24,12 +25,10 @@ struct BattApp: App {
                 appState: appState,
                 settings: settings,
                 onOpenDashboard: {
-                    NSApp.activate(ignoringOtherApps: true)
-                    openWindow(id: "main")
+                    WindowCloseHandler.shared.showMainWindow()
                 },
                 onOpenSettings: {
-                    NSApp.activate(ignoringOtherApps: true)
-                    openWindow(id: "main")
+                    WindowCloseHandler.shared.showMainWindow()
                 }
             )
             .preferredColorScheme(settings.theme.colorScheme)

@@ -7,6 +7,16 @@ import UserNotifications
 public final class AppState: ObservableObject {
     public static let shared = AppState()
     
+    // Window visibility & ultra-low power mode
+    @Published public var isWindowVisible: Bool = true {
+        didSet {
+            resetSamplingTimer()
+            if isWindowVisible {
+                sampleTick()
+            }
+        }
+    }
+    
     // Telemetry & Snapshot
     @Published public var currentSnapshot: BatterySnapshot?
     @Published public var previousSnapshot: BatterySnapshot?
@@ -21,6 +31,9 @@ public final class AppState: ObservableObject {
     
     // Per-app Energy Attribution
     @Published public var appRecords: [AppEnergyRecord] = []
+    
+    // Hardware & Compute Energy Breakdown (CPU, GPU, RAM, SSD, Screen, Fans, Keyboard, Radios)
+    @Published public var hardwareShares: [ComponentEnergyShare] = []
     
     // Alerts
     @Published public var recentAlerts: [BatterySpikeAlert] = []
@@ -73,7 +86,21 @@ public final class AppState: ObservableObject {
                 alertsEnabled: false
             )
             self.livePoints = DropRateEngine.shared.getLiveHistory()
+            self.hardwareShares = HardwareEnergyTracker.shared.calculateBreakdown(
+                totalWatts: s.instantPowerWatts,
+                dischargedPercent: 0.0,
+                dischargedMWh: 0.0,
+                temperatureCelsius: s.temperatureCelsius
+            )
         }
+    }
+    
+    public func setWindowVisible(_ visible: Bool) {
+        self.isWindowVisible = visible
+    }
+    
+    public func openMainWindow() {
+        WindowCloseHandler.shared.showMainWindow()
     }
     
     public func refreshNow() {
@@ -86,7 +113,16 @@ public final class AppState: ObservableObject {
     
     private func startSamplingTimer() {
         timer?.invalidate()
-        let interval = isLiveInspectorActive ? 1.0 : SettingsState.shared.samplingInterval
+        
+        // When window is minimized to menu bar, poll every 30s (20x more efficient, <0.001% CPU)
+        let interval: Double
+        if !isWindowVisible {
+            interval = 30.0
+        } else if isLiveInspectorActive {
+            interval = 1.0
+        } else {
+            interval = SettingsState.shared.samplingInterval
+        }
         
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -129,6 +165,14 @@ public final class AppState: ObservableObject {
         )
         self.appRecords = updatedApps
         
+        // Calculate Hardware vs Compute Energy Breakdown (CPU, GPU, RAM, SSD, Screen, Fans, Keyboard, Radios)
+        self.hardwareShares = HardwareEnergyTracker.shared.calculateBreakdown(
+            totalWatts: newSnap.instantPowerWatts,
+            dischargedPercent: dischargedPercent,
+            dischargedMWh: dischargedMWh,
+            temperatureCelsius: newSnap.temperatureCelsius
+        )
+        
         // Record to live engine & detect spikes
         let topNames = updatedApps.prefix(3).map { $0.name }
         if let alert = DropRateEngine.shared.recordSample(
@@ -145,7 +189,9 @@ public final class AppState: ObservableObject {
         // Save to 7-day history store
         HistoryStore.shared.addSnapshot(newSnap)
         HistoryStore.shared.updateAppRecords(updatedApps)
-        self.dailySummaries = HistoryStore.shared.getDailySummaries()
+        if isWindowVisible {
+            self.dailySummaries = HistoryStore.shared.getDailySummaries()
+        }
     }
     
     private func handleSpikeAlert(_ alert: BatterySpikeAlert) {
@@ -175,10 +221,12 @@ public final class AppState: ObservableObject {
         HistoryStore.shared.clearAllHistory()
         DropRateEngine.shared.clearLiveHistory()
         ProcessEnergyTracker.shared.resetSession()
+        HardwareEnergyTracker.shared.reset()
         recentAlerts.removeAll()
         appRecords.removeAll()
         livePoints.removeAll()
         dailySummaries.removeAll()
+        hardwareShares.removeAll()
         sessionStartTime = Date()
         sessionStartSnapshot = currentSnapshot
     }
