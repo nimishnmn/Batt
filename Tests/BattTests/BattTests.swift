@@ -1,0 +1,148 @@
+import Testing
+import Foundation
+@testable import Batt
+
+@Suite("Batt Core Telemetry & Math Tests")
+struct BattTests {
+
+    @Test("Raw battery percentage computation with precision")
+    func testRawBatteryPercentage() {
+        let rawCurrent = 6265
+        let rawMax = 8043
+        let rawPercent = (Double(rawCurrent) / Double(rawMax)) * 100.0
+        
+        // 6265 / 8043 = 77.8938%
+        #expect(abs(rawPercent - 77.8938) < 0.01)
+        
+        let formatted1 = UnitsFormatter.formatPercentage(rawPercent, decimals: 1)
+        #expect(formatted1 == "77.9%")
+        
+        let formatted2 = UnitsFormatter.formatPercentage(rawPercent, decimals: 2)
+        #expect(formatted2 == "77.89%")
+    }
+
+    @Test("Instantaneous drop rate calculation in %/hour and Watts")
+    func testDropRateCalculations() {
+        let rawMax = 8043
+        let instantAmperage = -762 // negative when discharging
+        let voltageMillivolts = 12251 // 12.251 V
+        
+        // Drop rate per hour = (762 / 8043) * 100% = 9.474% / hour
+        let dropRatePerHour = (Double(abs(instantAmperage)) / Double(rawMax)) * 100.0
+        #expect(abs(dropRatePerHour - 9.474) < 0.01)
+        
+        // Instantaneous power (Watts) = (12251 * -762) / 1,000,000 = -9.335 W
+        let watts = (Double(voltageMillivolts) * Double(instantAmperage)) / 1_000_000.0
+        #expect(abs(watts - (-9.335)) < 0.01)
+        
+        // Units formatting
+        let formattedRate = DropRateUnit.percentPerHour.format(
+            ratePerHour: dropRatePerHour,
+            dischargeWatts: abs(watts),
+            dischargeMilliamps: abs(instantAmperage)
+        )
+        #expect(formattedRate == "9.47 %/hr")
+        
+        let formattedMinRate = DropRateUnit.percentPerMinute.format(
+            ratePerHour: dropRatePerHour,
+            dischargeWatts: abs(watts),
+            dischargeMilliamps: abs(instantAmperage)
+        )
+        #expect(formattedMinRate == "0.158 %/min")
+    }
+
+    @Test("Multi-unit energy conversions")
+    func testEnergyUnits() {
+        let mWh = 12000.0 // 12 Wh
+        let voltage = 12.0 // Volts
+        
+        let whStr = EnergyUnit.wattHours.format(mWh: mWh, voltageVolts: voltage)
+        #expect(whStr == "12.00 Wh")
+        
+        let mahStr = EnergyUnit.milliampereHours.format(mWh: mWh, voltageVolts: voltage)
+        #expect(mahStr == "1000 mAh")
+        
+        let jStr = EnergyUnit.joules.format(mWh: mWh, voltageVolts: voltage)
+        #expect(jStr == "43200 J") // 12 Wh * 3600 = 43200 J
+    }
+
+    @Test("Power unit conversions")
+    func testPowerUnits() {
+        let watts = 9.35
+        #expect(PowerUnit.watts.format(watts: watts) == "9.35 W")
+        #expect(PowerUnit.milliwatts.format(watts: watts) == "9350 mW")
+    }
+
+    @Test("Battery snapshot generation from IORegistry")
+    func testLiveSnapshotFetch() {
+        let monitor = BatteryMonitor.shared
+        let snapshot = monitor.fetchSnapshot()
+        
+        #expect(snapshot != nil)
+        if let snap = snapshot {
+            #expect(snap.rawPercentage >= 0.0 && snap.rawPercentage <= 100.0)
+            #expect(snap.voltageMillivolts > 5000) // Laptop packs > 5V
+            #expect(snap.rawMaxCapacity > 1000)
+            #expect(snap.cycleCount >= 0)
+        }
+    }
+
+    @Test("7-day retention pruning in HistoryStore")
+    func testHistoryRetention() {
+        let store = HistoryStore.shared
+        
+        // Add a recent snapshot
+        let recentSnap = BatterySnapshot(
+            timestamp: Date(),
+            rawCurrentCapacity: 5000,
+            rawMaxCapacity: 6000,
+            designCapacity: 6000,
+            nominalChargeCapacity: 6000,
+            rawPercentage: 83.33,
+            appleReportedPercentage: 84,
+            healthPercentage: 100.0,
+            voltageMillivolts: 12000,
+            instantAmperage: -800,
+            filteredAmperage: -800,
+            instantPowerWatts: -9.6,
+            instantDropRatePerHour: 13.33,
+            cycleCount: 10,
+            temperatureCelsius: 25.0,
+            isExternalConnected: false,
+            isCharging: false,
+            isFullyCharged: false
+        )
+        store.addSnapshot(recentSnap)
+        
+        // Add an old snapshot (8 days ago)
+        let oldSnap = BatterySnapshot(
+            timestamp: Date().addingTimeInterval(-8 * 24 * 3600),
+            rawCurrentCapacity: 5000,
+            rawMaxCapacity: 6000,
+            designCapacity: 6000,
+            nominalChargeCapacity: 6000,
+            rawPercentage: 83.33,
+            appleReportedPercentage: 84,
+            healthPercentage: 100.0,
+            voltageMillivolts: 12000,
+            instantAmperage: -800,
+            filteredAmperage: -800,
+            instantPowerWatts: -9.6,
+            instantDropRatePerHour: 13.33,
+            cycleCount: 10,
+            temperatureCelsius: 25.0,
+            isExternalConnected: false,
+            isCharging: false,
+            isFullyCharged: false
+        )
+        store.addSnapshot(oldSnap)
+        
+        // Trigger prune
+        store.pruneOldRecords()
+        
+        let snapshots = store.getSnapshots()
+        let cutoff = Date().addingTimeInterval(-store.maxAgeSeconds)
+        let hasOld = snapshots.contains { $0.timestamp < cutoff }
+        #expect(!hasOld)
+    }
+}
