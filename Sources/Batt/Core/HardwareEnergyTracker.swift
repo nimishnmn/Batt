@@ -26,6 +26,8 @@ public final class HardwareEnergyTracker: @unchecked Sendable {
     
     private var cumulativeComponentDrop: [String: Double] = [:]
     private var cumulativeComponentEnergyMWh: [String: Double] = [:]
+    private var smoothedComponentWatts: [String: Double] = [:]
+    private var smoothedBrightness: Double = 0.5
     private let lock = NSLock()
     
     private typealias GetBrightnessFunc = @convention(c) (UInt32, UnsafeMutablePointer<Float>) -> Int32
@@ -50,7 +52,8 @@ public final class HardwareEnergyTracker: @unchecked Sendable {
         return 0.5
     }
     
-    /// Calculates live hardware breakdown and accumulates battery drop %
+    /// Calculates live hardware breakdown with Exponential Moving Average (EMA) smoothing
+    /// to avoid hyperactive flickering when brightness or current draw changes.
     public func calculateBreakdown(
         totalWatts: Double,
         dischargedPercent: Double,
@@ -61,10 +64,14 @@ public final class HardwareEnergyTracker: @unchecked Sendable {
         defer { lock.unlock() }
         
         let watts = max(0.5, abs(totalWatts))
-        let brightness = Double(getDisplayBrightness())
+        let targetBrightness = Double(getDisplayBrightness())
+        
+        // Smooth brightness with EMA (alpha = 0.35) for fluid transitions
+        smoothedBrightness = (smoothedBrightness * 0.65) + (targetBrightness * 0.35)
+        let brightness = smoothedBrightness
         
         // 1. Physical & Peripheral Power Model
-        // Screen backlight: 0.4W idle panel + up to 5.0W backlight based on brightness curve
+        // Screen backlight: 0.4W idle panel + up to 4.8W backlight based on smooth brightness curve
         let rawScreenWatts = 0.4 + 4.8 * pow(brightness, 1.6)
         let screenWatts = min(watts * 0.50, max(0.4, rawScreenWatts))
         
@@ -92,17 +99,13 @@ public final class HardwareEnergyTracker: @unchecked Sendable {
         // 2. Compute Power (CPU, GPU, RAM, SSD)
         let computeTotal = max(0.2, watts - physicalSum)
         
-        // CPU: 52% of compute
         let cpuWatts = computeTotal * 0.52
-        // GPU & Neural/Media Engine: 26% of compute
         let gpuWatts = computeTotal * 0.26
-        // Unified RAM: 14% of compute
         let ramWatts = computeTotal * 0.14
-        // SSD Storage Controller: 8% of compute
         let ssdWatts = computeTotal * 0.08
         
-        // Components definitions
-        let componentsRaw: [(id: String, name: String, icon: String, color: Color, watts: Double, category: ComponentCategory, desc: String)] = [
+        // Raw instantaneous components
+        let rawList: [(id: String, name: String, icon: String, color: Color, watts: Double, category: ComponentCategory, desc: String)] = [
             // Compute
             ("cpu", "CPU Cores & Threads", "cpu.fill", .blue, cpuWatts, .compute, "Efficiency & Performance core workload"),
             ("gpu", "GPU & Media Engine", "square.grid.2x2.fill", .purple, gpuWatts, .compute, "Metal graphics, display compositor & video decode"),
@@ -117,10 +120,19 @@ public final class HardwareEnergyTracker: @unchecked Sendable {
             ("system", "Baseboard & Standby Rails", "powerplug", .gray, audioStandbyWatts, .physical, "Power management ICs, audio DAC & board idle")
         ]
         
-        var shares: [ComponentEnergyShare] = []
-        let allWattsSum = componentsRaw.reduce(0.0) { $0 + $1.watts }
+        // Apply EMA smoothing to each component (alpha = 0.3) so numbers glide gracefully
+        var smoothedList: [(id: String, name: String, icon: String, color: Color, watts: Double, category: ComponentCategory, desc: String)] = []
+        for item in rawList {
+            let prev = smoothedComponentWatts[item.id] ?? item.watts
+            let smoothW = (prev * 0.70) + (item.watts * 0.30)
+            smoothedComponentWatts[item.id] = smoothW
+            smoothedList.append((item.id, item.name, item.icon, item.color, smoothW, item.category, item.desc))
+        }
         
-        for comp in componentsRaw {
+        var shares: [ComponentEnergyShare] = []
+        let allWattsSum = smoothedList.reduce(0.0) { $0 + $1.watts }
+        
+        for comp in smoothedList {
             let shareRatio = allWattsSum > 0 ? (comp.watts / allWattsSum) : 0.0
             let deltaPercent = dischargedPercent * shareRatio
             let deltaMWh = dischargedMWh * shareRatio
@@ -151,5 +163,6 @@ public final class HardwareEnergyTracker: @unchecked Sendable {
         defer { lock.unlock() }
         cumulativeComponentDrop.removeAll()
         cumulativeComponentEnergyMWh.removeAll()
+        smoothedComponentWatts.removeAll()
     }
 }

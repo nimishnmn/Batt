@@ -54,6 +54,7 @@ public final class AppState: ObservableObject {
     @Published public var dailySummaries: [DaySummary] = []
     
     private var timer: Timer?
+    private var lastSampleTime: Date = Date()
     private var cancellables = Set<AnyCancellable>()
     
     private init() {
@@ -79,11 +80,18 @@ public final class AppState: ObservableObject {
         }
     }
     
+    private var lastHardwareChangeTime: Date = .distantPast
+    
     private func setupHardwareChangeObserver() {
         BatteryMonitor.shared.onPowerSourceChanged = { [weak self] in
             Task { @MainActor [weak self] in
-                // Immediately refresh on power adapter changes or hardware state updates
-                self?.sampleTick()
+                guard let self = self else { return }
+                // Throttle hardware notifications to at most once every 1.0 second to prevent event storming
+                let now = Date()
+                if now.timeIntervalSince(self.lastHardwareChangeTime) >= 1.0 {
+                    self.lastHardwareChangeTime = now
+                    self.sampleTick()
+                }
             }
         }
     }
@@ -230,6 +238,10 @@ public final class AppState: ObservableObject {
     private func sampleTick(isWakeReconciliation: Bool = false) {
         guard let newSnap = BatteryMonitor.shared.fetchSnapshot() else { return }
         
+        let now = Date()
+        let dt = max(0.1, min(60.0, now.timeIntervalSince(lastSampleTime)))
+        lastSampleTime = now
+        
         let oldSnap = currentSnapshot
         self.previousSnapshot = oldSnap
         self.currentSnapshot = newSnap
@@ -246,6 +258,16 @@ public final class AppState: ObservableObject {
             }
             if !newSnap.isCharging && newSnap.rawPercentage < old.rawPercentage {
                 dischargedPercent = old.rawPercentage - newSnap.rawPercentage
+            }
+        }
+        
+        // Continuous integration fallback: battery capacity ticks in coarse integer mAh steps (~every 5-10s).
+        // To prevent drop percentage from staying 0% while power watts update rapidly on brightness changes,
+        // integrate instantaneous drop rate across elapsed time dt so drop percentage and watts progress in sync.
+        if !newSnap.isCharging && dischargedPercent == 0.0 && newSnap.instantDropRatePerHour > 0 {
+            dischargedPercent = (newSnap.instantDropRatePerHour / 3600.0) * dt
+            if dischargedMWh == 0.0 {
+                dischargedMWh = abs(newSnap.instantPowerWatts) * (dt / 3600.0) * 1000.0
             }
         }
         
