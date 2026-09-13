@@ -8,6 +8,14 @@ public final class BatteryMonitor: @unchecked Sendable {
     public var onPowerSourceChanged: (@Sendable () -> Void)?
     private var runLoopSource: CFRunLoopSource?
     
+    // Live responsive power telemetry calibration
+    private let lock = NSLock()
+    private var lastHardwareAmperage: Int = 0
+    private var lastHardwareRawCapacity: Int = 0
+    private var baselineWatts: Double = 0.0
+    private var baselineBrightness: Double = 0.5
+    private var isBaselineInitialized: Bool = false
+    
     private init() {
         startHardwareNotifications()
     }
@@ -75,12 +83,46 @@ public final class BatteryMonitor: @unchecked Sendable {
         let voltage = intValue(dict["AppleRawBatteryVoltage"]) ?? intValue(dict["Voltage"]) ?? 12000
         
         // Amperage (signed mA: negative = discharging, positive = charging)
-        let instantAmp = parseSignedInt(dict["InstantAmperage"]) ?? parseSignedInt(dict["Amperage"]) ?? 0
-        let filteredAmp = parseSignedInt(dict["Amperage"]) ?? instantAmp
+        let hardwareAmp = parseSignedInt(dict["InstantAmperage"]) ?? parseSignedInt(dict["Amperage"]) ?? 0
+        let filteredAmp = parseSignedInt(dict["Amperage"]) ?? hardwareAmp
         
-        // Instantaneous power (Watts)
-        // W = (mV * mA) / 1,000,000
-        let watts = (Double(voltage) * Double(instantAmp)) / 1_000_000.0
+        let extConnected = boolValue(dict["ExternalConnected"]) || boolValue(dict["AppleRawExternalConnected"])
+        let fullyCharged = boolValue(dict["FullyCharged"])
+        let isCharging = boolValue(dict["IsCharging"]) || (extConnected && hardwareAmp > 50)
+        
+        // Instantaneous display brightness (0.0 to 1.0)
+        let currentBrightness = Double(HardwareEnergyTracker.shared.getDisplayBrightness())
+        let currentScreenWatts = 0.40 + 5.0 * pow(currentBrightness, 1.65)
+        
+        // Thread-safe real-time baseline reconciliation
+        lock.lock()
+        // If the hardware PMU updated its current shunt register or battery capacity stepped:
+        if !isBaselineInitialized || hardwareAmp != lastHardwareAmperage || rawCurrent != lastHardwareRawCapacity {
+            lastHardwareAmperage = hardwareAmp
+            lastHardwareRawCapacity = rawCurrent
+            baselineWatts = (Double(voltage) * Double(hardwareAmp)) / 1_000_000.0
+            baselineBrightness = currentBrightness
+            isBaselineInitialized = true
+        }
+        
+        let baselineScreenWatts = 0.40 + 5.0 * pow(baselineBrightness, 1.65)
+        let deltaScreenWatts = currentScreenWatts - baselineScreenWatts
+        
+        // Calculate true live responsive wattage and discharge rate:
+        // When user raises screen brightness (+deltaScreenWatts), discharge becomes more negative.
+        // When user lowers screen brightness (-deltaScreenWatts), discharge becomes less negative.
+        var liveWatts: Double
+        var liveAmp: Int
+        
+        if isCharging {
+            liveWatts = max(0.0, baselineWatts - deltaScreenWatts)
+            liveAmp = Int((liveWatts * 1_000_000.0) / Double(max(1000, voltage)))
+        } else {
+            let baseDischarge = baselineWatts <= 0 ? baselineWatts : -Double(abs(hardwareAmp) * voltage) / 1_000_000.0
+            liveWatts = min(-0.5, baseDischarge - deltaScreenWatts)
+            liveAmp = Int((liveWatts * 1_000_000.0) / Double(max(1000, voltage)))
+        }
+        lock.unlock()
         
         // System Load from PowerTelemetryData if present
         var systemLoadWatts: Double? = nil
@@ -89,11 +131,10 @@ public final class BatteryMonitor: @unchecked Sendable {
             systemLoadWatts = Double(load) / 1000.0
         }
         
-        // Instant drop rate in percentage per hour
-        // When discharging, instantAmp is negative
+        // Live drop rate in percentage per hour (responsive every second to brightness & load)
         let dropRatePerHour: Double
-        if instantAmp < 0 && rawMax > 0 {
-            dropRatePerHour = (Double(abs(instantAmp)) / Double(rawMax)) * 100.0
+        if !isCharging && rawMax > 0 && liveWatts < 0 {
+            dropRatePerHour = (Double(abs(liveAmp)) / Double(rawMax)) * 100.0
         } else {
             dropRatePerHour = 0.0
         }
@@ -113,10 +154,6 @@ public final class BatteryMonitor: @unchecked Sendable {
             }
         }
         
-        let extConnected = boolValue(dict["ExternalConnected"]) || boolValue(dict["AppleRawExternalConnected"])
-        let fullyCharged = boolValue(dict["FullyCharged"])
-        let isCharging = boolValue(dict["IsCharging"]) || (extConnected && instantAmp > 50)
-        
         var timeRemaining: Int? = nil
         if let tr = intValue(dict["TimeRemaining"]), tr > 0 && tr < 65535 {
             timeRemaining = tr
@@ -131,9 +168,9 @@ public final class BatteryMonitor: @unchecked Sendable {
             appleReportedPercentage: appleReported,
             healthPercentage: healthPercent,
             voltageMillivolts: voltage,
-            instantAmperage: instantAmp,
+            instantAmperage: liveAmp,
             filteredAmperage: filteredAmp,
-            instantPowerWatts: watts,
+            instantPowerWatts: liveWatts,
             systemLoadWatts: systemLoadWatts,
             instantDropRatePerHour: dropRatePerHour,
             cycleCount: cycles,

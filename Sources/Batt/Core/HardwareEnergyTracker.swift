@@ -71,9 +71,8 @@ public final class HardwareEnergyTracker: @unchecked Sendable {
         let brightness = smoothedBrightness
         
         // 1. Physical & Peripheral Power Model
-        // Screen backlight: 0.4W idle panel + up to 4.8W backlight based on smooth brightness curve
-        let rawScreenWatts = 0.4 + 4.8 * pow(brightness, 1.6)
-        let screenWatts = min(watts * 0.50, max(0.4, rawScreenWatts))
+        // Screen backlight: 0.4W idle panel + up to 5.0W backlight based on smooth brightness curve
+        let screenWatts = 0.40 + 5.0 * pow(brightness, 1.65)
         
         // Keyboard Backlight & Ambient Sensors: 0.05W to 0.3W
         let kbdWatts = min(0.35, max(0.05, watts * 0.03))

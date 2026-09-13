@@ -86,9 +86,9 @@ public final class AppState: ObservableObject {
         BatteryMonitor.shared.onPowerSourceChanged = { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
-                // Throttle hardware notifications to at most once every 1.0 second to prevent event storming
+                // Debounce rapid brightness/key events to 0.2s for quick, fluid reactivity
                 let now = Date()
-                if now.timeIntervalSince(self.lastHardwareChangeTime) >= 1.0 {
+                if now.timeIntervalSince(self.lastHardwareChangeTime) >= 0.2 {
                     self.lastHardwareChangeTime = now
                     self.sampleTick()
                 }
@@ -196,7 +196,14 @@ public final class AppState: ObservableObject {
     }
     
     public func setWindowVisible(_ visible: Bool) {
+        let changed = (self.isWindowVisible != visible)
         self.isWindowVisible = visible
+        if changed {
+            resetSamplingTimer()
+            if visible {
+                sampleTick()
+            }
+        }
     }
     
     public func openMainWindow() {
@@ -209,19 +216,21 @@ public final class AppState: ObservableObject {
     
     public func toggleLiveInspector() {
         isLiveInspectorActive.toggle()
+        resetSamplingTimer()
     }
     
     private func startSamplingTimer() {
         timer?.invalidate()
         
-        // When window is minimized to menu bar, poll every 30s (20x more efficient)
+        // When window is minimized to menu bar, poll every 30s (20x more efficient).
+        // When window is open, sample every 1.0s (or 0.5s for live inspector) for true live telemetry!
         let interval: Double
         if !isWindowVisible {
             interval = 30.0
         } else if isLiveInspectorActive {
-            interval = 1.0
+            interval = 0.5
         } else {
-            interval = SettingsState.shared.samplingInterval
+            interval = 1.0
         }
         
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
@@ -250,25 +259,12 @@ public final class AppState: ObservableObject {
         var dischargedMWh: Double = 0.0
         var dischargedPercent: Double = 0.0
         
-        if let old = oldSnap {
-            if !newSnap.isCharging && newSnap.rawCurrentCapacity < old.rawCurrentCapacity {
-                let deltaMAh = Double(old.rawCurrentCapacity - newSnap.rawCurrentCapacity)
-                let avgVoltage = Double(old.voltageMillivolts + newSnap.voltageMillivolts) / 2000.0 // Volts
-                dischargedMWh = deltaMAh * avgVoltage
-            }
-            if !newSnap.isCharging && newSnap.rawPercentage < old.rawPercentage {
-                dischargedPercent = old.rawPercentage - newSnap.rawPercentage
-            }
-        }
-        
-        // Continuous integration fallback: battery capacity ticks in coarse integer mAh steps (~every 5-10s).
-        // To prevent drop percentage from staying 0% while power watts update rapidly on brightness changes,
-        // integrate instantaneous drop rate across elapsed time dt so drop percentage and watts progress in sync.
-        if !newSnap.isCharging && dischargedPercent == 0.0 && newSnap.instantDropRatePerHour > 0 {
+        // When discharging, continuously integrate power draw across elapsed time dt (every second).
+        // This ensures the drop percentage advances smoothly in real-time lockstep with live wattage
+        // without being bottlenecked by the battery PMU's coarse ~10-second integer mAh quant.
+        if !newSnap.isCharging && newSnap.instantDropRatePerHour > 0 {
             dischargedPercent = (newSnap.instantDropRatePerHour / 3600.0) * dt
-            if dischargedMWh == 0.0 {
-                dischargedMWh = abs(newSnap.instantPowerWatts) * (dt / 3600.0) * 1000.0
-            }
+            dischargedMWh = abs(newSnap.instantPowerWatts) * (dt / 3600.0) * 1000.0
         }
         
         // If waking up from sleep, reconcile sleep drop to Standby Drain instead of blaming active apps

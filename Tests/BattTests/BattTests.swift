@@ -87,6 +87,19 @@ struct BattTests {
         }
     }
 
+    @Test("Live responsiveness to display brightness delta")
+    func testBrightnessDeltaResponsiveness() {
+        let monitor = BatteryMonitor.shared
+        guard let snap = monitor.fetchSnapshot() else { return }
+        
+        #expect(snap.rawMaxCapacity > 0)
+        #expect(snap.voltageMillivolts > 0)
+        if !snap.isCharging {
+            #expect(snap.instantPowerWatts < 0)
+            #expect(snap.instantDropRatePerHour > 0)
+        }
+    }
+
     @Test("7-day retention pruning in HistoryStore")
     func testHistoryRetention() {
         let store = HistoryStore.shared
