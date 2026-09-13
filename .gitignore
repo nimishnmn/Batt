@@ -5,3 +5,5 @@ xcuserdata/
 DerivedData/
 .swiftpm/
 Batt.app
+*.dmg
+dmg_staging/

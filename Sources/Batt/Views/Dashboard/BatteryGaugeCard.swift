@@ -40,7 +40,7 @@ public struct BatteryGaugeCard: View {
                                 }
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
-                                .background(Color.green.opacity(0.18))
+                                .background(Color.green.opacity(0.25))
                                 .foregroundColor(.green)
                                 .cornerRadius(6)
                             } else {
@@ -53,42 +53,57 @@ public struct BatteryGaugeCard: View {
                                 }
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
-                                .background(Color.secondary.opacity(0.15))
-                                .foregroundColor(.secondary)
+                                .background(Color.orange.opacity(0.2))
+                                .foregroundColor(.orange)
                                 .cornerRadius(6)
                             }
                         }
                         
-                        // 4 Key Enlarged Metrics
+                        // 4 Key Enlarged Colorful Metrics
                         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
-                            // 1. Apple Menu Bar
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("APPLE MENU BAR")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundColor(.secondary)
+                            // 1. Apple Menu Bar (inflated)
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "applelogo")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundColor(.blue)
+                                    Text("APPLE MENU BAR (INFLATED)")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundColor(.blue)
+                                }
                                 
                                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                                     Text("\(snap.appleReportedPercentage)%")
                                         .font(.system(size: 24, weight: .heavy, design: .rounded))
+                                        .foregroundColor(.primary)
                                     
                                     let diff = Double(snap.appleReportedPercentage) - snap.rawPercentage
                                     Text(String(format: "(%@%.2f%%)", diff >= 0 ? "+" : "", diff))
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundColor(diff.magnitude > 0.05 ? .secondary : .green)
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundColor(.orange)
                                 }
                             }
-                            .padding(12)
+                            .padding(14)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.85))
+                                    .fill(Color.blue.opacity(0.10))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .stroke(Color.blue.opacity(0.25), lineWidth: 1)
+                                    )
                             )
                             
                             // 2. Live Drop Rate
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("LIVE DROP RATE")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundColor(.secondary)
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "flame.fill")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundColor(.orange)
+                                    Text("LIVE DROP RATE")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundColor(.orange)
+                                }
                                 
                                 if snap.isCharging {
                                     Text("+" + settings.powerUnit.format(watts: abs(snap.instantPowerWatts)))
@@ -104,45 +119,67 @@ public struct BatteryGaugeCard: View {
                                     .foregroundColor(snap.instantDropRatePerHour > 18 ? .red : .orange)
                                 }
                             }
-                            .padding(12)
+                            .padding(14)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.85))
+                                    .fill(Color.orange.opacity(0.10))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .stroke(Color.orange.opacity(0.25), lineWidth: 1)
+                                    )
                             )
                             
                             // 3. Time Remaining
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("TIME REMAINING")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundColor(.secondary)
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "clock.fill")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundColor(.teal)
+                                    Text("TIME REMAINING")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundColor(.teal)
+                                }
                                 
                                 Text(UnitsFormatter.formatDuration(minutes: snap.timeRemainingMinutes ?? -1))
                                     .font(.system(size: 24, weight: .heavy, design: .rounded))
-                                    .foregroundColor(.primary)
+                                    .foregroundColor(.teal)
                             }
-                            .padding(12)
+                            .padding(14)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.85))
+                                    .fill(Color.teal.opacity(0.10))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .stroke(Color.teal.opacity(0.25), lineWidth: 1)
+                                    )
                             )
                             
                             // 4. Battery Health
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("BATTERY HEALTH")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundColor(.secondary)
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "heart.fill")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundColor(.green)
+                                    Text("BATTERY HEALTH")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundColor(.green)
+                                }
                                 
                                 Text(String(format: "%.1f%%", snap.healthPercentage))
                                     .font(.system(size: 24, weight: .heavy, design: .rounded))
                                     .foregroundColor(snap.healthPercentage >= 80 ? .green : .orange)
                             }
-                            .padding(12)
+                            .padding(14)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.85))
+                                    .fill(Color.green.opacity(0.10))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .stroke(Color.green.opacity(0.25), lineWidth: 1)
+                                    )
                             )
                         }
                     }
@@ -156,13 +193,13 @@ public struct BatteryGaugeCard: View {
                         .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: 3)
                 )
                 
-                // Hardware Telemetry Details Grid
+                // Colorful Hardware Telemetry Details Grid
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                     MetricCardView(
                         title: "Current Draw",
                         value: settings.currentUnit.format(milliampere: snap.instantAmperage),
                         subtitle: snap.instantAmperage < 0 ? "Discharging" : "Charging",
-                        iconName: "bolt.badge.clock",
+                        iconName: "bolt.badge.clock.fill",
                         accentColor: snap.instantAmperage < 0 ? .orange : .green
                     )
                     
@@ -211,7 +248,7 @@ public struct BatteryGaugeCard: View {
                         value: sessionDropFormatted,
                         subtitle: "Since \(sessionStartTimeFormatted)",
                         iconName: "chart.line.downtrend.xyaxis",
-                        accentColor: .orange
+                        accentColor: .pink
                     )
                     
                     MetricCardView(

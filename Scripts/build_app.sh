@@ -4,8 +4,8 @@ set -e
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 cd "$DIR"
 
-echo "🔨 Building Batt (Release)..."
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build -c release
+echo "🔨 Building Batt Universal Binary (arm64 + x86_64)..."
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build -c release --arch arm64 --arch x86_64
 
 APP_NAME="Batt"
 APP_BUNDLE="${APP_NAME}.app"
@@ -18,9 +18,17 @@ rm -rf "${APP_BUNDLE}"
 mkdir -p "${MACOS_DIR}"
 mkdir -p "${RESOURCES_DIR}"
 
-# Copy binary
-cp ".build/release/${APP_NAME}" "${MACOS_DIR}/${APP_NAME}"
+# Copy universal binary
+if [ -f ".build/apple/Products/Release/${APP_NAME}" ]; then
+    cp ".build/apple/Products/Release/${APP_NAME}" "${MACOS_DIR}/${APP_NAME}"
+else
+    cp ".build/release/${APP_NAME}" "${MACOS_DIR}/${APP_NAME}"
+fi
 chmod +x "${MACOS_DIR}/${APP_NAME}"
+
+# Verify architectures
+echo "🔍 Verifying binary architectures:"
+lipo -info "${MACOS_DIR}/${APP_NAME}"
 
 # Copy Info.plist and PkgInfo
 cp "Resources/Info.plist" "${CONTENTS_DIR}/Info.plist"
@@ -31,7 +39,7 @@ if [ -f "Resources/AppIcon.icns" ]; then
     cp "Resources/AppIcon.icns" "${RESOURCES_DIR}/AppIcon.icns"
 fi
 
-# Code sign (ad-hoc)
+# Code sign (ad-hoc with deep entitlements)
 echo "✍️  Ad-hoc codesigning ${APP_BUNDLE}..."
 codesign --force --deep --sign - "${APP_BUNDLE}"
 

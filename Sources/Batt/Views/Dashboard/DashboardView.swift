@@ -34,7 +34,7 @@ public struct DashboardView: View {
     public var body: some View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 6) {
-                // Sidebar items matching screenshot corner radius
+                // Sidebar items with FULL hit box coverage to entire left bar width
                 ForEach(NavigationSection.allCases) { section in
                     Button(action: {
                         selectedSection = section
@@ -62,10 +62,12 @@ public struct DashboardView: View {
                             }
                         }
                         .padding(.horizontal, 14)
-                        .padding(.vertical, 9)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle()) // Makes entire width clickable!
                         .background(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(selectedSection == section ? Color(nsColor: .quaternaryLabelColor).opacity(0.9) : Color.clear)
+                                .fill(selectedSection == section ? Color(nsColor: .quaternaryLabelColor).opacity(0.95) : Color.clear)
                         )
                     }
                     .buttonStyle(.plain)
@@ -151,7 +153,7 @@ public struct DashboardView: View {
             }
             .toolbar {
                 ToolbarItemGroup(placement: .automatic) {
-                    // Replaced Live Rate toolbar item with hover-to-close cross
+                    // Precision live rate button with flawless hover and no text-overlap glitch
                     ToolbarLiveRateItem(appState: appState, settings: settings)
                     
                     Button(action: {
@@ -179,8 +181,7 @@ public struct DashboardView: View {
 }
 
 /// Dynamic toolbar live rate item:
-/// When active, displays the live rate in place of the button across every window.
-/// When hovered, displays an (X) cross button to close/stop live inspection.
+/// Fixes animation glitch: uses crisp state change without text-on-text overlapping.
 public struct ToolbarLiveRateItem: View {
     @ObservedObject var appState: AppState
     @ObservedObject var settings: SettingsState
@@ -195,79 +196,76 @@ public struct ToolbarLiveRateItem: View {
     public var body: some View {
         if appState.isLiveInspectorActive {
             Button(action: {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    appState.isLiveInspectorActive = false
-                }
+                appState.isLiveInspectorActive = false
             }) {
-                HStack(spacing: 6) {
+                ZStack {
                     if isHovering {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.red)
-                            .font(.system(size: 13, weight: .bold))
-                        
-                        Text("Stop Live")
-                            .font(.caption)
-                            .fontWeight(.bold)
-                            .foregroundColor(.red)
+                        HStack(spacing: 6) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.red)
+                                .font(.system(size: 13, weight: .bold))
+                            
+                            Text("Stop Live")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(.red)
+                        }
                     } else {
-                        Circle()
-                            .fill(Color.red)
-                            .frame(width: 7, height: 7)
-                            .opacity(pulse ? 1.0 : 0.3)
-                            .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulse)
-                            .onAppear { pulse = true }
-                        
-                        if let snap = appState.currentSnapshot {
-                            if snap.isCharging {
-                                Text(String(format: "+%.1fW", abs(snap.instantPowerWatts)))
-                                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                                    .foregroundColor(.green)
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(Color.red)
+                                .frame(width: 8, height: 8)
+                                .opacity(pulse ? 1.0 : 0.3)
+                                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulse)
+                                .onAppear { pulse = true }
+                            
+                            if let snap = appState.currentSnapshot {
+                                if snap.isCharging {
+                                    Text(String(format: "+%.1fW", abs(snap.instantPowerWatts)))
+                                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                                        .foregroundColor(.green)
+                                } else {
+                                    Text(String(format: "-%.2f %%/h", snap.instantDropRatePerHour))
+                                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                                        .foregroundColor(.orange)
+                                }
                             } else {
-                                Text(String(format: "-%.2f %%/h", snap.instantDropRatePerHour))
+                                Text("Sampling…")
                                     .font(.system(size: 12, weight: .bold, design: .rounded))
                                     .foregroundColor(.orange)
                             }
-                        } else {
-                            Text("Sampling…")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
                         }
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(isHovering ? Color.red.opacity(0.15) : Color(nsColor: .controlBackgroundColor))
+                        .fill(isHovering ? Color.red.opacity(0.18) : Color(nsColor: .controlBackgroundColor))
                         .overlay(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(isHovering ? Color.red.opacity(0.4) : Color.orange.opacity(0.4), lineWidth: 1)
+                                .stroke(isHovering ? Color.red.opacity(0.5) : Color.orange.opacity(0.4), lineWidth: 1)
                         )
                 )
             }
             .buttonStyle(.plain)
             .onHover { hovering in
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    isHovering = hovering
-                }
+                isHovering = hovering
             }
-            .help("Click (X) to stop live rate inspection")
+            .animation(nil, value: isHovering) // Disables cross-fade to eliminate the text-overlap bug!
+            .help("Click to stop live rate inspection")
         } else {
             Button(action: {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    appState.isLiveInspectorActive = true
-                }
+                appState.isLiveInspectorActive = true
             }) {
                 HStack(spacing: 5) {
                     Image(systemName: "bolt.fill")
                         .font(.system(size: 12))
                         .foregroundColor(.orange)
                     Text("Live Rate")
-                        .font(.caption)
-                        .fontWeight(.semibold)
+                        .font(.system(size: 12, weight: .semibold))
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(Color(nsColor: .controlBackgroundColor))

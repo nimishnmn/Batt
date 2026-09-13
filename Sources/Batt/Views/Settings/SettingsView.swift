@@ -12,82 +12,73 @@ public struct SettingsView: View {
     
     public var body: some View {
         TabView {
-            // Tab 1: General (Merged Appearance, Tracking, and Menu Bar)
-            ScrollView {
-                VStack(spacing: 22) {
-                    // Appearance Section
-                    VStack(alignment: .leading, spacing: 12) {
-                        Label("Appearance & Theme", systemImage: "paintpalette.fill")
-                            .font(.headline)
-                        
-                        Picker("Theme", selection: $settings.theme) {
-                            ForEach(AppTheme.allCases) { theme in
-                                Text(theme.rawValue).tag(theme)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        
-                        Picker("Decimal Precision", selection: $settings.decimalPrecision) {
-                            Text("1 Decimal (e.g. 77.9%)").tag(1)
-                            Text("2 Decimals (e.g. 77.89%)").tag(2)
+            // Tab 1: Appearance
+            Form {
+                Section(header: Text("Appearance & Theme").font(.headline)) {
+                    Picker("Theme", selection: $settings.theme) {
+                        ForEach(AppTheme.allCases) { theme in
+                            Text(theme.rawValue).tag(theme)
                         }
                     }
-                    .padding(16)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color(nsColor: .controlBackgroundColor))
-                    )
+                    .pickerStyle(.inline)
                     
-                    // Tracking & Performance Section
-                    VStack(alignment: .leading, spacing: 12) {
-                        Label("Tracking & Resource Usage", systemImage: "timer")
-                            .font(.headline)
-                        
-                        Picker("Background Polling Interval", selection: $settings.samplingInterval) {
-                            ForEach(SamplingInterval.allCases) { interval in
-                                Text(interval.title).tag(interval.rawValue)
-                            }
-                        }
-                        
-                        Text("Batt uses direct sub-millisecond IORegistry hardware reads. Even at 10 seconds, background CPU usage is under 0.05%.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        Toggle("Adaptive Idle Saver (Reduce polling when display is asleep)", isOn: $settings.adaptiveIdleSlowdown)
+                    Picker("Decimal Precision", selection: $settings.decimalPrecision) {
+                        Text("1 Decimal (e.g. 77.9%)").tag(1)
+                        Text("2 Decimals (e.g. 77.89%)").tag(2)
                     }
-                    .padding(16)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color(nsColor: .controlBackgroundColor))
-                    )
-                    
-                    // Menu Bar Display Settings Section
-                    VStack(alignment: .leading, spacing: 12) {
-                        Label("Menu Bar Display Settings", systemImage: "menubar.rectangle")
-                            .font(.headline)
-                        
-                        Picker("Display Style", selection: $settings.menuBarStyle) {
-                            ForEach(MenuBarDisplayStyle.allCases) { style in
-                                Text(style.rawValue).tag(style)
-                            }
-                        }
-                        
-                        Toggle("Show Charging Indicator (⚡️)", isOn: $settings.showChargingIndicator)
-                        Toggle("Show Drop Indicator (↓)", isOn: $settings.showDropArrow)
-                    }
-                    .padding(16)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color(nsColor: .controlBackgroundColor))
-                    )
                 }
-                .padding(20)
             }
+            .padding(20)
             .tabItem {
-                Label("General", systemImage: "gearshape")
+                Label("Appearance", systemImage: "paintpalette")
             }
             
-            // Tab 2: Units of Measurement
+            // Tab 2: Tracking & Performance
+            Form {
+                Section(header: Text("Tracking & Resource Usage").font(.headline)) {
+                    Picker("Background Polling Interval", selection: $settings.samplingInterval) {
+                        ForEach(SamplingInterval.allCases) { interval in
+                            Text(interval.title).tag(interval.rawValue)
+                        }
+                    }
+                    
+                    Text("Batt uses direct sub-millisecond IORegistry hardware reads. Even at 10 seconds, background CPU usage is under 0.05%.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    Toggle("Adaptive Idle Saver (Reduce polling when display is asleep)", isOn: $settings.adaptiveIdleSlowdown)
+                }
+            }
+            .padding(20)
+            .tabItem {
+                Label("Tracking", systemImage: "timer")
+            }
+            
+            // Tab 3: Menu Bar Display Settings
+            Form {
+                Section(header: Text("Menu Bar Item Format").font(.headline)) {
+                    Picker("Display Style", selection: $settings.menuBarStyle) {
+                        ForEach(MenuBarDisplayStyle.allCases) { style in
+                            Text(style.rawValue).tag(style)
+                        }
+                    }
+                    
+                    Toggle("Show Charging Indicator (⚡️)", isOn: $settings.showChargingIndicator)
+                    Toggle("Show Drop Indicator (↓)", isOn: $settings.showDropArrow)
+                }
+                
+                Section(header: Text("Live Battery Time").font(.headline)) {
+                    Text("Select 'Battery % + Time Remaining' or 'Time Remaining Only' above to show live remaining battery time right in your macOS top bar.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(20)
+            .tabItem {
+                Label("Menu Bar", systemImage: "menubar.rectangle")
+            }
+            
+            // Tab 4: Units of Measurement
             Form {
                 Section(header: Text("Units Configuration").font(.headline)) {
                     Picker("Power Unit", selection: $settings.powerUnit) {
@@ -126,7 +117,7 @@ public struct SettingsView: View {
                 Label("Units", systemImage: "scalemass")
             }
             
-            // Tab 3: Instant Alerts
+            // Tab 5: Instant Alerts
             Form {
                 Section(header: Text("Instantaneous Drop Alerts").font(.headline)) {
                     Toggle("Enable Instantaneous High Drop Rate Alerts", isOn: $settings.instantAlertsEnabled)
@@ -172,7 +163,7 @@ public struct SettingsView: View {
                 Label("Alerts", systemImage: "bell.badge")
             }
             
-            // Tab 4: Startup & Storage
+            // Tab 6: Startup & Storage
             Form {
                 Section(header: Text("Auto Start with the PC").font(.headline)) {
                     Toggle("Launch Batt automatically when logging in", isOn: Binding(
@@ -209,7 +200,7 @@ public struct SettingsView: View {
                 Label("System & Data", systemImage: "externaldrive")
             }
             
-            // Tab 5: About Section
+            // Tab 7: About
             VStack(spacing: 20) {
                 Spacer()
                 
@@ -238,7 +229,6 @@ public struct SettingsView: View {
                         .fontWeight(.semibold)
                     
                     HStack(spacing: 16) {
-                        // GitHub Button
                         Link(destination: URL(string: "https://github.com/nimishnmn")!) {
                             HStack(spacing: 6) {
                                 Image(systemName: "chevron.left.forwardslash.chevron.right")
@@ -256,7 +246,6 @@ public struct SettingsView: View {
                             )
                         }
                         
-                        // Instagram Button
                         Link(destination: URL(string: "https://instagram.com/nimish0_0")!) {
                             HStack(spacing: 6) {
                                 Image(systemName: "camera.fill")
@@ -283,6 +272,6 @@ public struct SettingsView: View {
                 Label("About", systemImage: "info.circle")
             }
         }
-        .frame(width: 600, height: 480)
+        .frame(width: 600, height: 460)
     }
 }

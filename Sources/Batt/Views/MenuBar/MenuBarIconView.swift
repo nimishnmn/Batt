@@ -56,6 +56,21 @@ public struct MenuBarIconView: View {
                 return String(format: "%@ · %@%.1fW", batteryStr, arrow, watts)
             }
             
+        case .percentAndTime:
+            if snap.isCharging {
+                return "\(batteryStr) · ⚡️ Charging"
+            } else {
+                let time = UnitsFormatter.formatDuration(minutes: snap.timeRemainingMinutes ?? -1)
+                return "\(batteryStr) · \(time)"
+            }
+            
+        case .timeOnly:
+            if snap.isCharging {
+                return "⚡️ Charging"
+            } else {
+                return UnitsFormatter.formatDuration(minutes: snap.timeRemainingMinutes ?? -1)
+            }
+            
         case .wattsOnly:
             return settings.powerUnit.format(watts: abs(snap.instantPowerWatts))
         }

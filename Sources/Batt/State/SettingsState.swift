@@ -20,9 +20,11 @@ public enum AppTheme: String, CaseIterable, Identifiable {
 
 public enum MenuBarDisplayStyle: String, CaseIterable, Identifiable {
     case iconOnly = "Icon Only"
-    case rawPercent = "True Raw %"
-    case percentAndRate = "Raw % + Drop Rate"
-    case percentAndWatts = "Raw % + Watts"
+    case rawPercent = "Battery %"
+    case percentAndRate = "Battery % + Drop Rate"
+    case percentAndWatts = "Battery % + Watts"
+    case percentAndTime = "Battery % + Time Remaining"
+    case timeOnly = "Time Remaining Only"
     case wattsOnly = "Watts Only"
     
     public var id: String { rawValue }
