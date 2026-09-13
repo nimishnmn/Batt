@@ -63,6 +63,28 @@ public struct MenuBarView: View {
                 .padding(.horizontal, 14)
                 .padding(.top, 14)
                 
+                // Sleep / Wake Sync Badge
+                if let mins = appState.lastSleepDurationMinutes, mins > 0 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "moon.stars.fill")
+                            .font(.system(size: 9))
+                            .foregroundColor(.purple)
+                        Text("Hardware synced after \(mins)m sleep")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.purple)
+                        if let drop = appState.lastSleepDropPercent, drop > 0.05 {
+                            Text(String(format: "(-%.2f%% standby)", drop))
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.purple.opacity(0.12))
+                    .cornerRadius(5)
+                    .padding(.horizontal, 14)
+                }
+                
                 // Apple vs Raw comparison bar
                 let diff = Double(snap.appleReportedPercentage) - snap.rawPercentage
                 HStack {
@@ -80,6 +102,7 @@ public struct MenuBarView: View {
                 .background(Color.secondary.opacity(0.1))
                 .cornerRadius(6)
                 .padding(.horizontal, 14)
+                .help("Formula: \(snap.rawCurrentCapacity) mAh ÷ \(snap.rawMaxCapacity) mAh = \(String(format: "%.2f%%", snap.rawPercentage)) (Apple reports \(snap.appleReportedPercentage)% smoothed)")
                 
                 Divider()
                 
@@ -168,5 +191,9 @@ public struct MenuBarView: View {
             }
         }
         .frame(width: 320)
+        .onAppear {
+            // Instantly re-check and sync hardware on click
+            appState.refreshNow()
+        }
     }
 }

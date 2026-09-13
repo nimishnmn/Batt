@@ -5,7 +5,26 @@ import IOKit.ps
 public final class BatteryMonitor: @unchecked Sendable {
     public static let shared = BatteryMonitor()
     
-    private init() {}
+    public var onPowerSourceChanged: (@Sendable () -> Void)?
+    private var runLoopSource: CFRunLoopSource?
+    
+    private init() {
+        startHardwareNotifications()
+    }
+    
+    /// Registers hardware power source callback with macOS kernel run loop.
+    /// Fires instantaneously within milliseconds when charger is plugged/unplugged or capacity ticks.
+    private func startHardwareNotifications() {
+        let context = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        let source = IOPSNotificationCreateRunLoopSource({ context in
+            guard let context = context else { return }
+            let monitor = Unmanaged<BatteryMonitor>.fromOpaque(context).takeUnretainedValue()
+            monitor.onPowerSourceChanged?()
+        }, context).takeRetainedValue()
+        
+        self.runLoopSource = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .defaultMode)
+    }
     
     /// Reads the latest snapshot directly from AppleSmartBattery in IORegistry.
     /// Runs in under 0.2 milliseconds, causing virtually zero CPU load.
@@ -33,10 +52,10 @@ public final class BatteryMonitor: @unchecked Sendable {
         let designCap = intValue(dict["DesignCapacity"]) ?? rawMax
         let nominalCap = intValue(dict["NominalChargeCapacity"]) ?? rawMax
         
-        // Apple's smoothed display percentage (e.g. 80)
+        // Apple's smoothed display percentage (e.g. 59)
         let appleReported = intValue(dict["CurrentCapacity"]) ?? 100
         
-        // True uninflated raw percentage (e.g. 77.89%)
+        // True uninflated raw percentage (e.g. 56.13%)
         let rawPercent: Double
         if rawMax > 0 {
             rawPercent = min(100.0, max(0.0, (Double(rawCurrent) / Double(rawMax)) * 100.0))
@@ -85,7 +104,6 @@ public final class BatteryMonitor: @unchecked Sendable {
         // Temperature (°C)
         var tempCelsius: Double = 25.0
         if let rawTemp = intValue(dict["Temperature"]) {
-            // Usually stored in units of 1/100 or 1/10 °C
             if rawTemp > 1000 {
                 tempCelsius = Double(rawTemp) / 100.0
             } else if rawTemp > 100 {

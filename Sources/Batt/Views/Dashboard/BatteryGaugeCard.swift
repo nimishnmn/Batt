@@ -57,6 +57,22 @@ public struct BatteryGaugeCard: View {
                                 .foregroundColor(.orange)
                                 .cornerRadius(6)
                             }
+                            
+                            if let mins = appState.lastSleepDurationMinutes, mins > 0 {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "moon.stars.fill")
+                                        .font(.caption2)
+                                        .foregroundColor(.purple)
+                                    Text("Synced after \(mins)m sleep")
+                                        .font(.caption2)
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(.purple)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Color.purple.opacity(0.18))
+                                .cornerRadius(6)
+                            }
                         }
                         
                         // 4 Key Enlarged Colorful Metrics
@@ -82,6 +98,10 @@ public struct BatteryGaugeCard: View {
                                         .font(.system(size: 13, weight: .bold))
                                         .foregroundColor(.orange)
                                 }
+                                
+                                Text("\(snap.rawCurrentCapacity) mAh ÷ \(snap.rawMaxCapacity) mAh = \(String(format: "%.2f%%", snap.rawPercentage))")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundColor(.secondary)
                             }
                             .padding(14)
                             .frame(maxWidth: .infinity, alignment: .leading)

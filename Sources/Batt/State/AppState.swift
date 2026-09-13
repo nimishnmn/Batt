@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import AppKit
 import UserNotifications
 
 @MainActor
@@ -20,6 +21,12 @@ public final class AppState: ObservableObject {
     // Telemetry & Snapshot
     @Published public var currentSnapshot: BatterySnapshot?
     @Published public var previousSnapshot: BatterySnapshot?
+    
+    // Sleep / Wake Reconciliation tracking
+    private var preSleepSnapshot: BatterySnapshot?
+    private var preSleepTime: Date?
+    @Published public var lastSleepDurationMinutes: Int? = nil
+    @Published public var lastSleepDropPercent: Double? = nil
     
     // Live Inspector Mode (1-second high frequency tracking)
     @Published public var isLiveInspectorActive: Bool = false {
@@ -53,6 +60,8 @@ public final class AppState: ObservableObject {
         requestNotificationPermissions()
         loadInitialData()
         startSamplingTimer()
+        setupSleepWakeObservers()
+        setupHardwareChangeObserver()
         
         // Listen for spike alerts from DropRateEngine
         DropRateEngine.shared.onSpikeAlert = { [weak self] alert in
@@ -68,6 +77,89 @@ public final class AppState: ObservableObject {
                 print("Notification permission error: \(error.localizedDescription)")
             }
         }
+    }
+    
+    private func setupHardwareChangeObserver() {
+        BatteryMonitor.shared.onPowerSourceChanged = { [weak self] in
+            Task { @MainActor [weak self] in
+                // Immediately refresh on power adapter changes or hardware state updates
+                self?.sampleTick()
+            }
+        }
+    }
+    
+    private func setupSleepWakeObservers() {
+        let center = NSWorkspace.shared.notificationCenter
+        
+        // When system is about to sleep
+        center.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleSystemWillSleep()
+            }
+        }
+        
+        // When system wakes up from sleep
+        center.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleSystemWake()
+            }
+        }
+        
+        // When display / screen wakes up
+        center.addObserver(
+            forName: NSWorkspace.screensDidWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleScreensWake()
+            }
+        }
+    }
+    
+    private func handleSystemWillSleep() {
+        preSleepSnapshot = currentSnapshot
+        preSleepTime = Date()
+    }
+    
+    private func handleSystemWake() {
+        let now = Date()
+        let sleepSeconds = preSleepTime.map { now.timeIntervalSince($0) } ?? 0
+        let isRealSleep = sleepSeconds > 15
+        
+        if isRealSleep {
+            lastSleepDurationMinutes = Int(sleepSeconds / 60.0)
+        }
+        
+        // 1. Immediately re-check and reconcile hardware state with zero delay
+        sampleTick(isWakeReconciliation: isRealSleep)
+        
+        // 2. Rapid multi-step stabilization burst
+        // MacBook power rails take 0.5s - 2s to stabilize following wake-up
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.sampleTick()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.sampleTick()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            self?.sampleTick()
+        }
+        
+        resetSamplingTimer()
+    }
+    
+    private func handleScreensWake() {
+        // Instant re-check when screen turns on
+        sampleTick()
     }
     
     private func loadInitialData() {
@@ -114,7 +206,7 @@ public final class AppState: ObservableObject {
     private func startSamplingTimer() {
         timer?.invalidate()
         
-        // When window is minimized to menu bar, poll every 30s (20x more efficient, <0.001% CPU)
+        // When window is minimized to menu bar, poll every 30s (20x more efficient)
         let interval: Double
         if !isWindowVisible {
             interval = 30.0
@@ -135,7 +227,7 @@ public final class AppState: ObservableObject {
         startSamplingTimer()
     }
     
-    private func sampleTick() {
+    private func sampleTick(isWakeReconciliation: Bool = false) {
         guard let newSnap = BatteryMonitor.shared.fetchSnapshot() else { return }
         
         let oldSnap = currentSnapshot
@@ -157,6 +249,35 @@ public final class AppState: ObservableObject {
             }
         }
         
+        // If waking up from sleep, reconcile sleep drop to Standby Drain instead of blaming active apps
+        if isWakeReconciliation, let pre = preSleepSnapshot {
+            if !newSnap.isCharging && newSnap.rawPercentage < pre.rawPercentage {
+                let sleepDrop = pre.rawPercentage - newSnap.rawPercentage
+                self.lastSleepDropPercent = sleepDrop
+                
+                // Attribute to Standby item
+                let standbyRecord = AppEnergyRecord(
+                    id: "com.apple.sleep.standby",
+                    pid: 0,
+                    name: "macOS Sleep & Standby",
+                    bundleIdentifier: "com.apple.sleep.standby",
+                    cpuTimeNsDelta: 0,
+                    cpuShare: 1.0,
+                    batteryPercentConsumed: sleepDrop,
+                    energyConsumedMWh: dischargedMWh,
+                    instantPowerWatts: 0.15,
+                    lastActiveTimestamp: Date()
+                )
+                ProcessEnergyTracker.shared.updateStandbyDrain(standbyRecord)
+                
+                // Clear out app delta attribution for this step to avoid false blame
+                dischargedPercent = 0.0
+                dischargedMWh = 0.0
+            }
+            preSleepSnapshot = nil
+            preSleepTime = nil
+        }
+        
         // Sample running apps and attribute power
         let updatedApps = ProcessEnergyTracker.shared.sample(
             dischargedMWh: dischargedMWh,
@@ -173,15 +294,17 @@ public final class AppState: ObservableObject {
             temperatureCelsius: newSnap.temperatureCelsius
         )
         
-        // Record to live engine & detect spikes
-        let topNames = updatedApps.prefix(3).map { $0.name }
-        if let alert = DropRateEngine.shared.recordSample(
-            snapshot: newSnap,
-            topApps: topNames,
-            thresholdWatts: SettingsState.shared.alertThresholdWatts,
-            alertsEnabled: SettingsState.shared.instantAlertsEnabled
-        ) {
-            handleSpikeAlert(alert)
+        // Record to live engine & detect spikes (ignore transient wake spikes)
+        if !isWakeReconciliation {
+            let topNames = updatedApps.prefix(3).map { $0.name }
+            if let alert = DropRateEngine.shared.recordSample(
+                snapshot: newSnap,
+                topApps: topNames,
+                thresholdWatts: SettingsState.shared.alertThresholdWatts,
+                alertsEnabled: SettingsState.shared.instantAlertsEnabled
+            ) {
+                handleSpikeAlert(alert)
+            }
         }
         
         self.livePoints = DropRateEngine.shared.getLiveHistory()
@@ -227,6 +350,8 @@ public final class AppState: ObservableObject {
         livePoints.removeAll()
         dailySummaries.removeAll()
         hardwareShares.removeAll()
+        lastSleepDurationMinutes = nil
+        lastSleepDropPercent = nil
         sessionStartTime = Date()
         sessionStartSnapshot = currentSnapshot
     }

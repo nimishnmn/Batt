@@ -123,6 +123,16 @@ public final class ProcessEnergyTracker: @unchecked Sendable {
             .sorted { $0.batteryPercentConsumed > $1.batteryPercentConsumed }
     }
     
+    public func updateStandbyDrain(_ record: AppEnergyRecord) {
+        lock.lock()
+        defer { lock.unlock() }
+        var existing = cumulativeAppRecords[record.id] ?? record
+        existing.batteryPercentConsumed += record.batteryPercentConsumed
+        existing.energyConsumedMWh += record.energyConsumedMWh
+        existing.lastActiveTimestamp = Date()
+        cumulativeAppRecords[record.id] = existing
+    }
+    
     public func getCumulativeRecords() -> [AppEnergyRecord] {
         lock.lock()
         defer { lock.unlock() }
