@@ -296,21 +296,27 @@ public final class AppState: ObservableObject {
             preSleepTime = nil
         }
         
-        // Sample running apps and attribute power
-        let updatedApps = ProcessEnergyTracker.shared.sample(
-            dischargedMWh: dischargedMWh,
-            dischargedPercent: dischargedPercent,
-            currentDischargeWatts: abs(newSnap.instantPowerWatts)
-        )
-        self.appRecords = updatedApps
-        
-        // Calculate Hardware vs Compute Energy Breakdown (CPU, GPU, RAM, SSD, Screen, Fans, Keyboard, Radios)
+        // 1. Calculate Hardware vs Compute Energy Breakdown (Screen, Fans, Keyboard, Radios, System rails)
         self.hardwareShares = HardwareEnergyTracker.shared.calculateBreakdown(
             totalWatts: newSnap.instantPowerWatts,
             dischargedPercent: dischargedPercent,
             dischargedMWh: dischargedMWh,
             temperatureCelsius: newSnap.temperatureCelsius
         )
+        
+        let computeWatts = self.hardwareShares
+            .filter { $0.category == .compute }
+            .reduce(0.0) { $0 + $1.instantWatts }
+        let computeMWh = computeWatts * (dt / 3600.0) * 1000.0
+        let computePercent = newSnap.instantPowerWatts != 0 ? (dischargedPercent * (computeWatts / max(0.1, abs(newSnap.instantPowerWatts)))) : dischargedPercent
+        
+        // 2. Sample running apps and attribute power draw from active compute SoC workload
+        let updatedApps = ProcessEnergyTracker.shared.sample(
+            dischargedMWh: computeMWh > 0 ? computeMWh : dischargedMWh,
+            dischargedPercent: computePercent > 0 ? computePercent : dischargedPercent,
+            currentDischargeWatts: max(0.2, computeWatts)
+        )
+        self.appRecords = updatedApps
         
         // Record to live engine & detect spikes (ignore transient wake spikes)
         if !isWakeReconciliation {

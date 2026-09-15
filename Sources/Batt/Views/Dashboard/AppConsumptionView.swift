@@ -60,6 +60,19 @@ public struct AppConsumptionView: View {
         physicalComponents.reduce(0.0) { $0 + $1.batteryPercentConsumed }
     }
     
+    private var topComputeApps: [AppEnergyRecord] {
+        let active = appState.appRecords.filter { $0.id != "com.apple.sleep.standby" }
+        let sorted = active.sorted {
+            if $0.instantPowerWatts > 0.01 && $1.instantPowerWatts <= 0.01 { return true }
+            if $1.instantPowerWatts > 0.01 && $0.instantPowerWatts <= 0.01 { return false }
+            if $0.instantPowerWatts > 0.01 && $1.instantPowerWatts > 0.01 {
+                return $0.instantPowerWatts > $1.instantPowerWatts
+            }
+            return $0.batteryPercentConsumed > $1.batteryPercentConsumed
+        }
+        return Array(sorted.prefix(6))
+    }
+    
     public var body: some View {
         VStack(spacing: 20) {
             // Header with Segmented Mode Switcher
@@ -69,7 +82,7 @@ public struct AppConsumptionView: View {
                         .font(.title2)
                         .fontWeight(.bold)
                     
-                    Text("Tracks compute silicon power (CPU, GPU, RAM, SSD) and physical peripheral drain (Screen, Fans, Keyboard, Radios).")
+                    Text("Tracks active application compute power and physical peripheral drain (Screen, Fans, Keyboard, Radios).")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -92,7 +105,7 @@ public struct AppConsumptionView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
                             Circle().fill(Color.blue).frame(width: 10, height: 10)
-                            Text("COMPUTE DRAIN (CPU, GPU, RAM, SSD)")
+                            Text("COMPUTE DRAIN (ACTIVE APPLICATIONS)")
                                 .font(.system(size: 11, weight: .bold))
                                 .foregroundColor(.secondary)
                         }
@@ -169,7 +182,7 @@ public struct AppConsumptionView: View {
             // Section 1: Compute & Hardware Cards
             if viewMode == .all || viewMode == .hardware {
                 VStack(alignment: .leading, spacing: 14) {
-                    // Compute Subsystem
+                    // Compute Subsystem (Top 6 Apps by Power Draw)
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
                             Image(systemName: "cpu.fill")
@@ -180,14 +193,26 @@ public struct AppConsumptionView: View {
                             
                             Spacer()
                             
-                            Text("Active SoC Processing")
+                            Text("Top 6 Apps by Power Draw")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
                         
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                            ForEach(computeComponents) { comp in
-                                ComponentCardView(comp: comp, settings: settings)
+                        if topComputeApps.isEmpty {
+                            Text("Sampling active applications…")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .padding(.vertical, 8)
+                        } else {
+                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                                ForEach(topComputeApps) { app in
+                                    TopAppCardView(
+                                        app: app,
+                                        totalComputeWatts: totalComputeWatts,
+                                        totalComputeDrop: totalComputeDrop,
+                                        settings: settings
+                                    )
+                                }
                             }
                         }
                     }
@@ -285,6 +310,87 @@ public struct AppConsumptionView: View {
                 )
             }
         }
+    }
+}
+
+private struct TopAppCardView: View {
+    let app: AppEnergyRecord
+    let totalComputeWatts: Double
+    let totalComputeDrop: Double
+    @ObservedObject var settings: SettingsState
+    
+    private var appIcon: NSImage {
+        if let bundleId = app.bundleIdentifier,
+           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+            return NSWorkspace.shared.icon(forFile: url.path)
+        }
+        return NSWorkspace.shared.icon(for: .application)
+    }
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(nsImage: appIcon)
+                .resizable()
+                .frame(width: 32, height: 32)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(app.name)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                
+                if app.instantPowerWatts > 0.02 {
+                    Text(String(format: "%.1f%% CPU Load", app.cpuShare * 100.0))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                } else if let bundleId = app.bundleIdentifier, !bundleId.isEmpty {
+                    Text(bundleId)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                } else {
+                    Text(String(format: "PID: %d • Active", app.pid))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            
+            Spacer()
+            
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(settings.powerUnit.format(watts: app.instantPowerWatts))
+                    .font(.subheadline)
+                    .fontWeight(.bold)
+                    .foregroundColor(.primary)
+                
+                HStack(spacing: 2) {
+                    Text(String(format: "-%.2f%%", app.batteryPercentConsumed))
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.orange)
+                    
+                    let share = totalComputeWatts > 0 ? (app.instantPowerWatts / totalComputeWatts) * 100.0 : 0.0
+                    if share > 0.5 {
+                        Text(String(format: "(%.0f%%)", min(100.0, share)))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    } else if totalComputeDrop > 0 && app.batteryPercentConsumed > 0 {
+                        let dropShare = min(100.0, (app.batteryPercentConsumed / totalComputeDrop) * 100.0)
+                        Text(String(format: "(%.0f%%)", dropShare))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.8))
+        )
     }
 }
 

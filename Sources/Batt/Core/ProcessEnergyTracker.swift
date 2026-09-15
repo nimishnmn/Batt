@@ -90,7 +90,17 @@ public final class ProcessEnergyTracker: @unchecked Sendable {
         // Prune terminated PIDs from cache
         lastCpuTimes = lastCpuTimes.filter { currentPids.contains($0.key) }
         
-        // Compute attribution
+        // Reset instant power & cpuShare for apps that are idle in this sampling interval
+        for appId in cumulativeAppRecords.keys {
+            if cumulativeAppRecords[appId]?.id == "com.apple.sleep.standby" { continue }
+            if let pid = cumulativeAppRecords[appId]?.pid, processDeltas[pid] == nil {
+                cumulativeAppRecords[appId]?.cpuTimeNsDelta = 0
+                cumulativeAppRecords[appId]?.cpuShare = 0.0
+                cumulativeAppRecords[appId]?.instantPowerWatts = 0.0
+            }
+        }
+        
+        // Compute attribution for active processes
         var intervalRecords: [AppEnergyRecord] = []
         
         for (pid, info) in processDeltas {
