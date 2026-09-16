@@ -190,11 +190,13 @@ public final class AppState: ObservableObject {
                 alertsEnabled: false
             )
             self.livePoints = DropRateEngine.shared.getLiveHistory()
+            let activeLoad = ProcessEnergyTracker.shared.getActiveAppsInstantWatts()
             self.hardwareShares = HardwareEnergyTracker.shared.calculateBreakdown(
                 totalWatts: s.instantPowerWatts,
                 dischargedPercent: 0.0,
                 dischargedMWh: 0.0,
-                temperatureCelsius: s.temperatureCelsius
+                temperatureCelsius: s.temperatureCelsius,
+                activeComputeWatts: activeLoad
             )
         }
     }
@@ -300,12 +302,16 @@ public final class AppState: ObservableObject {
             preSleepTime = nil
         }
         
-        // 1. Calculate Hardware vs Compute Energy Breakdown (Screen, Fans, Keyboard, Radios, System rails)
+        // 1. Check active app load from ProcessEnergyTracker
+        let activeLoad = ProcessEnergyTracker.shared.getActiveAppsInstantWatts()
+        
+        // 2. Calculate Hardware vs Compute Energy Breakdown (Screen, Fans, Keyboard, Radios, System rails)
         self.hardwareShares = HardwareEnergyTracker.shared.calculateBreakdown(
             totalWatts: newSnap.instantPowerWatts,
             dischargedPercent: dischargedPercent,
             dischargedMWh: dischargedMWh,
-            temperatureCelsius: newSnap.temperatureCelsius
+            temperatureCelsius: newSnap.temperatureCelsius,
+            activeComputeWatts: activeLoad
         )
         
         let computeWatts = self.hardwareShares
@@ -314,7 +320,7 @@ public final class AppState: ObservableObject {
         let computeMWh = computeWatts * (dt / 3600.0) * 1000.0
         let computePercent = newSnap.instantPowerWatts != 0 ? (dischargedPercent * (computeWatts / max(0.1, abs(newSnap.instantPowerWatts)))) : dischargedPercent
         
-        // 2. Sample running apps and attribute power draw from active compute SoC workload
+        // 3. Sample running apps and attribute power draw from active compute SoC workload
         let updatedApps = ProcessEnergyTracker.shared.sample(
             dischargedMWh: computeMWh > 0 ? computeMWh : dischargedMWh,
             dischargedPercent: computePercent > 0 ? computePercent : dischargedPercent,

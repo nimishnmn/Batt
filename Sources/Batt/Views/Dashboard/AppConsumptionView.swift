@@ -60,6 +60,26 @@ public struct AppConsumptionView: View {
         physicalComponents.reduce(0.0) { $0 + $1.batteryPercentConsumed }
     }
     
+    private var totalActiveAppsWatts: Double {
+        appState.appRecords
+            .filter { $0.id != "com.apple.sleep.standby" }
+            .reduce(0.0) { $0 + $1.instantPowerWatts }
+    }
+    
+    private var totalActiveAppsDrop: Double {
+        appState.appRecords
+            .filter { $0.id != "com.apple.sleep.standby" }
+            .reduce(0.0) { $0 + $1.batteryPercentConsumed }
+    }
+    
+    private var systemBaselineWatts: Double {
+        max(0.1, totalComputeWatts - totalActiveAppsWatts)
+    }
+    
+    private var systemBaselineDrop: Double {
+        max(0.0, totalComputeDrop - totalActiveAppsDrop)
+    }
+    
     private var topComputeApps: [AppEnergyRecord] {
         let active = appState.appRecords.filter { $0.id != "com.apple.sleep.standby" }
         let sorted = active.sorted {
@@ -70,7 +90,7 @@ public struct AppConsumptionView: View {
             }
             return $0.batteryPercentConsumed > $1.batteryPercentConsumed
         }
-        return Array(sorted.prefix(6))
+        return Array(sorted.prefix(5))
     }
     
     public var body: some View {
@@ -105,7 +125,7 @@ public struct AppConsumptionView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
                             Circle().fill(Color.blue).frame(width: 10, height: 10)
-                            Text("COMPUTE DRAIN (ACTIVE APPLICATIONS)")
+                            Text("COMPUTE DRAIN (APPS & SILICON)")
                                 .font(.system(size: 11, weight: .bold))
                                 .foregroundColor(.secondary)
                         }
@@ -120,6 +140,10 @@ public struct AppConsumptionView: View {
                                 .fontWeight(.bold)
                                 .foregroundColor(.orange)
                         }
+                        
+                        Text(String(format: "Apps: %@ • Silicon Baseline: %@", settings.powerUnit.format(watts: totalActiveAppsWatts), settings.powerUnit.format(watts: systemBaselineWatts)))
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(.secondary)
                     }
                     
                     Spacer()
@@ -143,6 +167,10 @@ public struct AppConsumptionView: View {
                                 .font(.system(size: 22, weight: .heavy, design: .rounded))
                                 .foregroundColor(.orange)
                         }
+                        
+                        Text("Display Backlight, PMIC, Radios & Fans")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(.secondary)
                     }
                 }
                 
@@ -193,7 +221,7 @@ public struct AppConsumptionView: View {
                             
                             Spacer()
                             
-                            Text("Top 6 Apps by Power Draw")
+                            Text("Active Apps & System Baseline")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -205,6 +233,15 @@ public struct AppConsumptionView: View {
                                 .padding(.vertical, 8)
                         } else {
                             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                                // 1. macOS System & Silicon Baseline (accounts for quiescent SoC & OS load)
+                                SystemBaselineCardView(
+                                    watts: systemBaselineWatts,
+                                    batteryDrop: systemBaselineDrop,
+                                    totalComputeWatts: totalComputeWatts,
+                                    settings: settings
+                                )
+                                
+                                // 2. Top active applications
                                 ForEach(topComputeApps) { app in
                                     TopAppCardView(
                                         app: app,
@@ -313,6 +350,77 @@ public struct AppConsumptionView: View {
     }
 }
 
+private struct SystemBaselineCardView: View {
+    let watts: Double
+    let batteryDrop: Double
+    let totalComputeWatts: Double
+    @ObservedObject var settings: SettingsState
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "apple.logo")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(width: 32, height: 32)
+                .background(
+                    LinearGradient(
+                        colors: [Color.blue.opacity(0.85), Color.purple.opacity(0.85)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text("macOS System & Silicon Baseline")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                
+                Text("Kernel, WindowServer & SoC uncore")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            
+            Spacer()
+            
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(settings.powerUnit.format(watts: watts))
+                    .font(.subheadline)
+                    .fontWeight(.bold)
+                    .foregroundColor(.primary)
+                
+                HStack(spacing: 2) {
+                    if batteryDrop >= 0.005 {
+                        Text(String(format: "-%.2f%%", batteryDrop))
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.orange)
+                    } else {
+                        Text("< 0.01%")
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.orange)
+                    }
+                    
+                    let share = totalComputeWatts > 0 ? (watts / totalComputeWatts) * 100.0 : 0.0
+                    if share >= 0.5 {
+                        Text(String(format: "(%.0f%%)", min(100.0, share)))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.8))
+        )
+    }
+}
+
 private struct TopAppCardView: View {
     let app: AppEnergyRecord
     let totalComputeWatts: Double
@@ -361,25 +469,47 @@ private struct TopAppCardView: View {
             Spacer()
             
             VStack(alignment: .trailing, spacing: 2) {
-                Text(settings.powerUnit.format(watts: app.instantPowerWatts))
-                    .font(.subheadline)
-                    .fontWeight(.bold)
-                    .foregroundColor(.primary)
+                if app.instantPowerWatts >= 0.005 {
+                    Text(settings.powerUnit.format(watts: app.instantPowerWatts))
+                        .font(.subheadline)
+                        .fontWeight(.bold)
+                        .foregroundColor(.primary)
+                } else if app.instantPowerWatts > 0.0001 {
+                    Text("< 0.01 W")
+                        .font(.subheadline)
+                        .fontWeight(.bold)
+                        .foregroundColor(.primary)
+                } else {
+                    Text("0.00 W")
+                        .font(.subheadline)
+                        .fontWeight(.bold)
+                        .foregroundColor(.secondary)
+                }
                 
                 HStack(spacing: 2) {
-                    Text(String(format: "-%.2f%%", app.batteryPercentConsumed))
-                        .font(.caption2)
-                        .fontWeight(.bold)
-                        .foregroundColor(.orange)
+                    if app.batteryPercentConsumed >= 0.005 {
+                        Text(String(format: "-%.2f%%", app.batteryPercentConsumed))
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.orange)
+                    } else if app.batteryPercentConsumed > 0.0001 {
+                        Text("< 0.01%")
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.orange)
+                    } else {
+                        Text("0.0%")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                     
                     let share = totalComputeWatts > 0 ? (app.instantPowerWatts / totalComputeWatts) * 100.0 : 0.0
-                    if share > 0.5 {
+                    if share >= 0.5 {
                         Text(String(format: "(%.0f%%)", min(100.0, share)))
                             .font(.caption2)
                             .foregroundColor(.secondary)
-                    } else if totalComputeDrop > 0 && app.batteryPercentConsumed > 0 {
-                        let dropShare = min(100.0, (app.batteryPercentConsumed / totalComputeDrop) * 100.0)
-                        Text(String(format: "(%.0f%%)", dropShare))
+                    } else if share > 0.05 {
+                        Text("(< 1%)")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }

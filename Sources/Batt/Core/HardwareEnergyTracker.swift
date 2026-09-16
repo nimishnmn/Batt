@@ -58,7 +58,8 @@ public final class HardwareEnergyTracker: @unchecked Sendable {
         totalWatts: Double,
         dischargedPercent: Double,
         dischargedMWh: Double,
-        temperatureCelsius: Double
+        temperatureCelsius: Double,
+        activeComputeWatts: Double = 0.0
     ) -> [ComponentEnergyShare] {
         lock.lock()
         defer { lock.unlock() }
@@ -70,38 +71,44 @@ public final class HardwareEnergyTracker: @unchecked Sendable {
         smoothedBrightness = (smoothedBrightness * 0.65) + (targetBrightness * 0.35)
         let brightness = smoothedBrightness
         
-        // 1. Physical & Peripheral Power Model
-        // Screen backlight: 0.4W idle panel + up to 5.0W backlight based on smooth brightness curve
-        let screenWatts = 0.40 + 5.0 * pow(brightness, 1.65)
+        // Dynamic Compute Allocation:
+        // Quiescent Apple Silicon SoC baseline (caches, uncore, memory controller): ~0.35W - 0.75W
+        let socBaseline = min(watts * 0.25, max(0.35, 0.65))
+        // Total compute = active applications dynamic workload + SoC baseline
+        let targetComputeTotal = min(max(0.4, watts - 0.5), max(0.45, activeComputeWatts + socBaseline))
+        // Physical total is the remaining hardware draw (Screen, PMIC, Radios, Fans)
+        let targetPhysicalTotal = max(0.2, watts - targetComputeTotal)
         
-        // Keyboard Backlight & Ambient Sensors: 0.05W to 0.3W
-        let kbdWatts = min(0.35, max(0.05, watts * 0.03))
-        
-        // Cooling Fans & Thermal Dissipation
-        let fansWatts: Double
+        // 1. Physical Component Weighting (Liquid Retina XDR Mini-LED, PMIC conversion loss, Radios)
+        // Liquid Retina XDR screen: 0.8W base panel + up to 6.2W at max brightness
+        let rawScreen = 0.80 + 6.2 * pow(brightness, 1.5)
+        let rawKbd = min(0.35, max(0.05, watts * 0.025))
+        let rawFans: Double
         if temperatureCelsius > 42.0 {
-            fansWatts = min(2.5, 0.4 + (temperatureCelsius - 42.0) * 0.12)
+            rawFans = min(2.5, 0.4 + (temperatureCelsius - 42.0) * 0.12)
         } else if temperatureCelsius > 35.0 {
-            fansWatts = 0.2
+            rawFans = 0.15
         } else {
-            fansWatts = 0.08
+            rawFans = 0.05
         }
+        let rawRadios = min(0.9, max(0.20, watts * 0.04))
+        // Baseboard, PMIC power conversion loss & audio rails
+        let rawBoard = min(2.5, max(0.40, watts * 0.12))
         
-        // Wi-Fi & Bluetooth Radios
-        let radioWatts = min(0.9, max(0.18, watts * 0.05))
+        let physicalWeightsSum = rawScreen + rawKbd + rawFans + rawRadios + rawBoard
+        let physicalScale = physicalWeightsSum > 0 ? (targetPhysicalTotal / physicalWeightsSum) : 1.0
         
-        // Audio & Baseboard Standby
-        let audioStandbyWatts = min(0.6, max(0.2, watts * 0.04))
+        let screenWatts = rawScreen * physicalScale
+        let kbdWatts = rawKbd * physicalScale
+        let fansWatts = rawFans * physicalScale
+        let radioWatts = rawRadios * physicalScale
+        let boardWatts = rawBoard * physicalScale
         
-        let physicalSum = screenWatts + kbdWatts + fansWatts + radioWatts + audioStandbyWatts
-        
-        // 2. Compute Power (CPU, GPU, RAM, SSD)
-        let computeTotal = max(0.2, watts - physicalSum)
-        
-        let cpuWatts = computeTotal * 0.52
-        let gpuWatts = computeTotal * 0.26
-        let ramWatts = computeTotal * 0.14
-        let ssdWatts = computeTotal * 0.08
+        // 2. Compute Power Breakdown (CPU, GPU, RAM, SSD)
+        let cpuWatts = targetComputeTotal * 0.52
+        let gpuWatts = targetComputeTotal * 0.26
+        let ramWatts = targetComputeTotal * 0.14
+        let ssdWatts = targetComputeTotal * 0.08
         
         // Raw instantaneous components
         let rawList: [(id: String, name: String, icon: String, color: Color, watts: Double, category: ComponentCategory, desc: String)] = [
@@ -113,10 +120,10 @@ public final class HardwareEnergyTracker: @unchecked Sendable {
             
             // Physical
             ("screen", "Display Screen & Backlight", "display", .orange, screenWatts, .physical, String(format: "Liquid Retina panel (Brightness: %.0f%%)", brightness * 100.0)),
-            ("fans", "Cooling Fans & Thermals", "fanblades.fill", .teal, fansWatts, .physical, String(format: "Active thermal dissipation (%.1f°C)", temperatureCelsius)),
-            ("kbd", "Keyboard Backlight & Sensors", "keyboard.fill", .yellow, kbdWatts, .physical, "Keyboard illumination LEDs & ambient light sensors"),
+            ("system", "Baseboard, PMIC & Power Rails", "powerplug", .gray, boardWatts, .physical, "Power management ICs, voltage regulators & idle rails"),
             ("radios", "Wi-Fi & Bluetooth Radios", "antenna.radiowaves.left.and.right", .green, radioWatts, .physical, "Wireless transmission & network packet processing"),
-            ("system", "Baseboard & Standby Rails", "powerplug", .gray, audioStandbyWatts, .physical, "Power management ICs, audio DAC & board idle")
+            ("kbd", "Keyboard Backlight & Sensors", "keyboard.fill", .yellow, kbdWatts, .physical, "Keyboard illumination LEDs & ambient light sensors"),
+            ("fans", "Cooling Fans & Thermals", "fanblades.fill", .teal, fansWatts, .physical, String(format: "Active thermal dissipation (%.1f°C)", temperatureCelsius))
         ]
         
         // Apply EMA smoothing to each component (alpha = 0.3) so numbers glide gracefully
@@ -128,29 +135,42 @@ public final class HardwareEnergyTracker: @unchecked Sendable {
             smoothedList.append((item.id, item.name, item.icon, item.color, smoothW, item.category, item.desc))
         }
         
-        var shares: [ComponentEnergyShare] = []
-        let allWattsSum = smoothedList.reduce(0.0) { $0 + $1.watts }
+        // Normalize smoothed components within their categories so totals match targetComputeTotal and targetPhysicalTotal exactly
+        let smoothedComputeSum = smoothedList.filter { $0.category == .compute }.reduce(0.0) { $0 + $1.watts }
+        let smoothedPhysicalSum = smoothedList.filter { $0.category == .physical }.reduce(0.0) { $0 + $1.watts }
         
-        for comp in smoothedList {
-            let shareRatio = allWattsSum > 0 ? (comp.watts / allWattsSum) : 0.0
+        let computeNorm = smoothedComputeSum > 0 ? (targetComputeTotal / smoothedComputeSum) : 1.0
+        let physicalNorm = smoothedPhysicalSum > 0 ? (targetPhysicalTotal / smoothedPhysicalSum) : 1.0
+        
+        var shares: [ComponentEnergyShare] = []
+        
+        for item in smoothedList {
+            let normWatts: Double
+            if item.category == .compute {
+                normWatts = item.watts * computeNorm
+            } else {
+                normWatts = item.watts * physicalNorm
+            }
+            
+            let shareRatio = watts > 0 ? (normWatts / watts) : 0.0
             let deltaPercent = dischargedPercent * shareRatio
             let deltaMWh = dischargedMWh * shareRatio
             
-            cumulativeComponentDrop[comp.id] = (cumulativeComponentDrop[comp.id] ?? 0.0) + deltaPercent
-            cumulativeComponentEnergyMWh[comp.id] = (cumulativeComponentEnergyMWh[comp.id] ?? 0.0) + deltaMWh
+            cumulativeComponentDrop[item.id] = (cumulativeComponentDrop[item.id] ?? 0.0) + deltaPercent
+            cumulativeComponentEnergyMWh[item.id] = (cumulativeComponentEnergyMWh[item.id] ?? 0.0) + deltaMWh
             
-            let totalDrop = cumulativeComponentDrop[comp.id] ?? 0.0
+            let totalDrop = cumulativeComponentDrop[item.id] ?? 0.0
             
             shares.append(ComponentEnergyShare(
-                id: comp.id,
-                name: comp.name,
-                iconName: comp.icon,
-                color: comp.color,
-                instantWatts: comp.watts,
+                id: item.id,
+                name: item.name,
+                iconName: item.icon,
+                color: item.color,
+                instantWatts: normWatts,
                 batteryPercentConsumed: totalDrop,
                 sharePercentage: shareRatio * 100.0,
-                category: comp.category,
-                detailDescription: comp.desc
+                category: item.category,
+                detailDescription: item.desc
             ))
         }
         

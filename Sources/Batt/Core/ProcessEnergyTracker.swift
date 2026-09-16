@@ -110,10 +110,9 @@ public final class ProcessEnergyTracker: @unchecked Sendable {
             let actualCpuFraction = wallNs > 0 ? (Double(info.deltaNs) / Double(wallNs)) : 0.0
             let relativeShare = (totalDeltaNs > 0) ? (Double(info.deltaNs) / Double(totalDeltaNs)) : 0.0
             
-            // Dynamic CPU power: ~1.6W per 100% active core workload on Apple Silicon / Intel.
+            // Dynamic CPU power: ~2.0W per 100% active core workload on Apple Silicon.
             // Under heavy load, scales with relative share of compute wattage.
-            // At idle, strictly bounds to actual dynamic CPU wattage so idle apps never inherit idle SoC baseboard leakage!
-            let dynamicWatts = actualCpuFraction * 1.6
+            let dynamicWatts = actualCpuFraction * 2.0
             let scaledWatts = currentDischargeWatts * relativeShare * activeComputeRatio
             let attributedWatts = min(currentDischargeWatts, max(dynamicWatts, scaledWatts))
             
@@ -142,6 +141,14 @@ public final class ProcessEnergyTracker: @unchecked Sendable {
         // Return sorted by highest battery percentage consumed
         return cumulativeAppRecords.values
             .sorted { $0.batteryPercentConsumed > $1.batteryPercentConsumed }
+    }
+    
+    public func getActiveAppsInstantWatts() -> Double {
+        lock.lock()
+        defer { lock.unlock() }
+        return cumulativeAppRecords.values
+            .filter { $0.id != "com.apple.sleep.standby" }
+            .reduce(0.0) { $0 + $1.instantPowerWatts }
     }
     
     public func updateStandbyDrain(_ record: AppEnergyRecord) {
