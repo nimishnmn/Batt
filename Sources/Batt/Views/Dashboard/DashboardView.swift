@@ -214,9 +214,7 @@ public struct ToolbarLiveRateItem: View {
                             Circle()
                                 .fill(Color.red)
                                 .frame(width: 8, height: 8)
-                                .opacity(pulse ? 1.0 : 0.3)
-                                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulse)
-                                .onAppear { pulse = true }
+                                .shadow(color: Color.red.opacity(0.6), radius: 2)
                             
                             if let snap = appState.currentSnapshot {
                                 if snap.isCharging {

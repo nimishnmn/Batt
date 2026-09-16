@@ -5,7 +5,15 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 cd "$DIR"
 
 echo "🔨 Building Batt Universal Binary (arm64 + x86_64)..."
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build -c release --arch arm64 --arch x86_64
+if DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build -c release --arch arm64 --arch x86_64 2>/dev/null; then
+    echo "✅ Built using Xcode multi-arch driver"
+else
+    echo "⚠️ Falling back to CommandLineTools dual-slice build + lipo..."
+    swift build -c release --triple arm64-apple-macosx
+    swift build -c release --triple x86_64-apple-macosx
+    mkdir -p .build/universal/release
+    lipo -create -output .build/universal/release/Batt .build/arm64-apple-macosx/release/Batt .build/x86_64-apple-macosx/release/Batt
+fi
 
 APP_NAME="Batt"
 APP_BUNDLE="${APP_NAME}.app"
@@ -19,7 +27,9 @@ mkdir -p "${MACOS_DIR}"
 mkdir -p "${RESOURCES_DIR}"
 
 # Copy universal binary
-if [ -f ".build/apple/Products/Release/${APP_NAME}" ]; then
+if [ -f ".build/universal/release/${APP_NAME}" ]; then
+    cp ".build/universal/release/${APP_NAME}" "${MACOS_DIR}/${APP_NAME}"
+elif [ -f ".build/apple/Products/Release/${APP_NAME}" ]; then
     cp ".build/apple/Products/Release/${APP_NAME}" "${MACOS_DIR}/${APP_NAME}"
 else
     cp ".build/release/${APP_NAME}" "${MACOS_DIR}/${APP_NAME}"

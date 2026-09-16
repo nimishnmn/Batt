@@ -31,10 +31,7 @@ public struct LiveDropRateView: View {
                                 Circle()
                                     .fill(Color.red)
                                     .frame(width: 8, height: 8)
-                                    .scaleEffect(pulse ? 1.3 : 0.8)
-                                    .opacity(pulse ? 1.0 : 0.5)
-                                    .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulse)
-                                    .onAppear { pulse = true }
+                                    .shadow(color: Color.red.opacity(0.6), radius: 2)
                                 
                                 Text("LIVE (1s)")
                                     .font(.system(size: 10, weight: .black))

@@ -61,8 +61,9 @@ public final class ProcessEnergyTracker: @unchecked Sendable {
         defer { lock.unlock() }
         
         let now = Date()
-        _ = now.timeIntervalSince(lastSampleTime)
+        let dt = max(0.1, min(60.0, now.timeIntervalSince(lastSampleTime)))
         lastSampleTime = now
+        let wallNs = UInt64(dt * 1_000_000_000.0)
         
         let apps = NSWorkspace.shared.runningApplications
         var processDeltas: [pid_t: (name: String, bundleId: String?, deltaNs: UInt64)] = [:]
@@ -102,13 +103,23 @@ public final class ProcessEnergyTracker: @unchecked Sendable {
         
         // Compute attribution for active processes
         var intervalRecords: [AppEnergyRecord] = []
+        let activeComputeRatio = wallNs > 0 ? min(1.0, Double(totalDeltaNs) / Double(wallNs)) : 0.0
         
         for (pid, info) in processDeltas {
-            let share = (totalDeltaNs > 0) ? (Double(info.deltaNs) / Double(totalDeltaNs)) : 0.0
+            // Actual CPU fraction of 1 core (e.g. 0.015 = 1.5% CPU core usage)
+            let actualCpuFraction = wallNs > 0 ? (Double(info.deltaNs) / Double(wallNs)) : 0.0
+            let relativeShare = (totalDeltaNs > 0) ? (Double(info.deltaNs) / Double(totalDeltaNs)) : 0.0
+            
+            // Dynamic CPU power: ~1.6W per 100% active core workload on Apple Silicon / Intel.
+            // Under heavy load, scales with relative share of compute wattage.
+            // At idle, strictly bounds to actual dynamic CPU wattage so idle apps never inherit idle SoC baseboard leakage!
+            let dynamicWatts = actualCpuFraction * 1.6
+            let scaledWatts = currentDischargeWatts * relativeShare * activeComputeRatio
+            let attributedWatts = min(currentDischargeWatts, max(dynamicWatts, scaledWatts))
+            
             let appId = info.bundleId ?? "\(info.name)_\(pid)"
-            let attributedMWh = dischargedMWh * share
-            let attributedPercent = dischargedPercent * share
-            let attributedWatts = currentDischargeWatts * share
+            let attributedMWh = (attributedWatts * (dt / 3600.0)) * 1000.0
+            let attributedPercent = dischargedPercent * relativeShare * activeComputeRatio
             
             var existing = cumulativeAppRecords[appId] ?? AppEnergyRecord(
                 id: appId,
@@ -118,7 +129,7 @@ public final class ProcessEnergyTracker: @unchecked Sendable {
             )
             
             existing.cpuTimeNsDelta = info.deltaNs
-            existing.cpuShare = share
+            existing.cpuShare = actualCpuFraction
             existing.batteryPercentConsumed += attributedPercent
             existing.energyConsumedMWh += attributedMWh
             existing.instantPowerWatts = attributedWatts
