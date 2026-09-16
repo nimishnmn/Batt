@@ -16,7 +16,9 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("IOKit"),
                 .linkedFramework("UserNotifications"),
-                .linkedFramework("ServiceManagement")
+                .linkedFramework("ServiceManagement"),
+                .linkedFramework("CoreAudio"),
+                .linkedFramework("AudioToolbox")
             ]
         ),
         .testTarget(

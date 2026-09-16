@@ -102,7 +102,7 @@ public struct AppConsumptionView: View {
                         .font(.title2)
                         .fontWeight(.bold)
                     
-                    Text("Tracks active application compute power and physical peripheral drain (Screen, Fans, Keyboard, Radios).")
+                    Text("Tracks active application compute power and physical peripheral drain (Screen, Speakers, Fans, Keyboard, Radios).")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -151,7 +151,7 @@ public struct AppConsumptionView: View {
                     // Physical Subtotal
                     VStack(alignment: .trailing, spacing: 4) {
                         HStack(spacing: 6) {
-                            Text("PHYSICAL DRAIN (SCREEN, FANS, KBD, RADIOS)")
+                            Text("PHYSICAL DRAIN (SCREEN, SPEAKERS, KBD, RADIOS)")
                                 .font(.system(size: 11, weight: .bold))
                                 .foregroundColor(.secondary)
                             Circle().fill(Color.orange).frame(width: 10, height: 10)
@@ -168,7 +168,7 @@ public struct AppConsumptionView: View {
                                 .foregroundColor(.orange)
                         }
                         
-                        Text("Display Backlight, PMIC, Radios & Fans")
+                        Text("Display, Speakers, PMIC, Radios & Fans")
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(.secondary)
                     }
@@ -265,7 +265,7 @@ public struct AppConsumptionView: View {
                             
                             Spacer()
                             
-                            Text("Illumination & Radios")
+                            Text("Screen, Audio, Radios & Fans")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }

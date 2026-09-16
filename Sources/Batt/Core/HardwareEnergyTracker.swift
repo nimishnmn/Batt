@@ -1,6 +1,8 @@
 import Foundation
 import SwiftUI
 import AppKit
+import CoreAudio
+import AudioToolbox
 
 public enum ComponentCategory: String, CaseIterable, Identifiable, Sendable {
     case compute = "Compute (SoC & Apps)"
@@ -52,6 +54,85 @@ public final class HardwareEnergyTracker: @unchecked Sendable {
         return 0.5
     }
     
+    /// Queries the system default audio output device to check if audio is actively playing, the volume, and mute status
+    public func getAudioPlaybackInfo() -> (isPlaying: Bool, volume: Float, isMuted: Bool) {
+        var defaultOutputDeviceID = AudioDeviceID(0)
+        var propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        let status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &propertyAddress,
+            0,
+            nil,
+            &propertySize,
+            &defaultOutputDeviceID
+        )
+
+        guard status == noErr, defaultOutputDeviceID != 0 else {
+            return (false, 0.5, false)
+        }
+
+        var isRunning: UInt32 = 0
+        var runSize = UInt32(MemoryLayout<UInt32>.size)
+        var runAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        _ = AudioObjectGetPropertyData(
+            defaultOutputDeviceID,
+            &runAddress,
+            0,
+            nil,
+            &runSize,
+            &isRunning
+        )
+
+        var volume: Float32 = 0.5
+        var volSize = UInt32(MemoryLayout<Float32>.size)
+        var volAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        _ = AudioObjectGetPropertyData(
+            defaultOutputDeviceID,
+            &volAddress,
+            0,
+            nil,
+            &volSize,
+            &volume
+        )
+
+        var isMuted: UInt32 = 0
+        var muteSize = UInt32(MemoryLayout<UInt32>.size)
+        var muteAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyMute,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        _ = AudioObjectGetPropertyData(
+            defaultOutputDeviceID,
+            &muteAddress,
+            0,
+            nil,
+            &muteSize,
+            &isMuted
+        )
+
+        let muted = (isMuted != 0)
+        let playing = (isRunning != 0) && !muted
+        return (playing, max(0.0, min(1.0, volume)), muted)
+    }
+    
     /// Calculates live hardware breakdown with Exponential Moving Average (EMA) smoothing
     /// to avoid hyperactive flickering when brightness or current draw changes.
     public func calculateBreakdown(
@@ -79,9 +160,24 @@ public final class HardwareEnergyTracker: @unchecked Sendable {
         // Physical total is the remaining hardware draw (Screen, PMIC, Radios, Fans)
         let targetPhysicalTotal = max(0.2, watts - targetComputeTotal)
         
-        // 1. Physical Component Weighting (Liquid Retina XDR Mini-LED, PMIC conversion loss, Radios)
+        let (isAudioPlaying, audioVolume, isAudioMuted) = getAudioPlaybackInfo()
+        
+        // 1. Physical Component Weighting (Liquid Retina XDR Mini-LED, Speakers, PMIC conversion loss, Radios)
         // Liquid Retina XDR screen: 0.8W base panel + up to 6.2W at max brightness
         let rawScreen = 0.80 + 6.2 * pow(brightness, 1.5)
+        
+        // Built-in Speakers & Audio DAC:
+        // When active: 0.15W up to 2.5W based on volume
+        // When idle/silent: 0.025W (or 0.005W when muted)
+        let rawSpeakers: Double
+        if isAudioPlaying {
+            rawSpeakers = 0.15 + 2.5 * pow(Double(audioVolume), 1.5)
+        } else if isAudioMuted {
+            rawSpeakers = 0.005
+        } else {
+            rawSpeakers = 0.025
+        }
+        
         let rawKbd = min(0.35, max(0.05, watts * 0.025))
         let rawFans: Double
         if temperatureCelsius > 42.0 {
@@ -95,10 +191,11 @@ public final class HardwareEnergyTracker: @unchecked Sendable {
         // Baseboard, PMIC power conversion loss & audio rails
         let rawBoard = min(2.5, max(0.40, watts * 0.12))
         
-        let physicalWeightsSum = rawScreen + rawKbd + rawFans + rawRadios + rawBoard
+        let physicalWeightsSum = rawScreen + rawSpeakers + rawKbd + rawFans + rawRadios + rawBoard
         let physicalScale = physicalWeightsSum > 0 ? (targetPhysicalTotal / physicalWeightsSum) : 1.0
         
         let screenWatts = rawScreen * physicalScale
+        let speakersWatts = rawSpeakers * physicalScale
         let kbdWatts = rawKbd * physicalScale
         let fansWatts = rawFans * physicalScale
         let radioWatts = rawRadios * physicalScale
@@ -118,8 +215,9 @@ public final class HardwareEnergyTracker: @unchecked Sendable {
             ("ram", "Unified Memory (RAM)", "memorychip.fill", .indigo, ramWatts, .compute, "Unified memory controller & LPDDR bandwidth"),
             ("ssd", "SSD Storage & I/O", "internaldrive.fill", .cyan, ssdWatts, .compute, "NVMe flash storage read/write bus"),
             
-            // Physical
+            // Physical (6 components: Screen, Speakers, System, Radios, Keyboard, Fans)
             ("screen", "Display Screen & Backlight", "display", .orange, screenWatts, .physical, String(format: "Liquid Retina panel (Brightness: %.0f%%)", brightness * 100.0)),
+            ("speakers", "Built-in Speakers & Audio", isAudioPlaying ? "speaker.wave.3.fill" : (isAudioMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"), .pink, speakersWatts, .physical, isAudioPlaying ? String(format: "Active Sound Output (Volume: %.0f%%)", audioVolume * 100.0) : (isAudioMuted ? "Muted • Amplifier Standby" : "Audio DAC & Amplifier Standby")),
             ("system", "Baseboard, PMIC & Power Rails", "powerplug", .gray, boardWatts, .physical, "Power management ICs, voltage regulators & idle rails"),
             ("radios", "Wi-Fi & Bluetooth Radios", "antenna.radiowaves.left.and.right", .green, radioWatts, .physical, "Wireless transmission & network packet processing"),
             ("kbd", "Keyboard Backlight & Sensors", "keyboard.fill", .yellow, kbdWatts, .physical, "Keyboard illumination LEDs & ambient light sensors"),
