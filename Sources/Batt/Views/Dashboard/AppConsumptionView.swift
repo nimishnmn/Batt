@@ -80,6 +80,34 @@ public struct AppConsumptionView: View {
         max(0.0, totalComputeDrop - totalActiveAppsDrop)
     }
     
+    private var totalDropRatePerHour: Double {
+        appState.currentSnapshot?.instantDropRatePerHour ?? 0.0
+    }
+    
+    private var computeLiveDropRatePerHour: Double {
+        let totalWatts = max(0.01, totalComputeWatts + totalPhysicalWatts)
+        return totalDropRatePerHour * (totalComputeWatts / totalWatts)
+    }
+    
+    private var physicalLiveDropRatePerHour: Double {
+        let totalWatts = max(0.01, totalComputeWatts + totalPhysicalWatts)
+        return totalDropRatePerHour * (totalPhysicalWatts / totalWatts)
+    }
+    
+    private func formatLiveDropRate(ratePerHour: Double, watts: Double) -> String {
+        switch settings.dropRateUnit {
+        case .percentPerHour:
+            return String(format: "(-%.2f %%/hr)", ratePerHour)
+        case .percentPerMinute:
+            return String(format: "(-%.3f %%/min)", ratePerHour / 60.0)
+        case .watts:
+            return String(format: "(-%.2f W)", watts)
+        case .milliamperes:
+            let volts = max(1.0, Double(appState.currentSnapshot?.voltageMillivolts ?? 12000) / 1000.0)
+            return String(format: "(-%.0f mA)", (watts / volts) * 1000.0)
+        }
+    }
+    
     private var topComputeApps: [AppEnergyRecord] {
         let active = appState.appRecords.filter { $0.id != "com.apple.sleep.standby" }
         let sorted = active.sorted {
@@ -135,13 +163,13 @@ public struct AppConsumptionView: View {
                                 .font(.system(size: 22, weight: .heavy, design: .rounded))
                                 .foregroundColor(.blue)
                             
-                            Text(String(format: "(-%.2f%% drop)", totalComputeDrop))
+                            Text(formatLiveDropRate(ratePerHour: computeLiveDropRatePerHour, watts: totalComputeWatts))
                                 .font(.caption)
                                 .fontWeight(.bold)
                                 .foregroundColor(.orange)
                         }
                         
-                        Text(String(format: "Apps: %@ • Silicon Baseline: %@", settings.powerUnit.format(watts: totalActiveAppsWatts), settings.powerUnit.format(watts: systemBaselineWatts)))
+                        Text(String(format: "Apps: %@ • Silicon: %@ • Session: -%.2f%% total", settings.powerUnit.format(watts: totalActiveAppsWatts), settings.powerUnit.format(watts: systemBaselineWatts), totalComputeDrop))
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(.secondary)
                     }
@@ -158,7 +186,7 @@ public struct AppConsumptionView: View {
                         }
                         
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(String(format: "(-%.2f%% drop)", totalPhysicalDrop))
+                            Text(formatLiveDropRate(ratePerHour: physicalLiveDropRatePerHour, watts: totalPhysicalWatts))
                                 .font(.caption)
                                 .fontWeight(.bold)
                                 .foregroundColor(.orange)
@@ -168,7 +196,7 @@ public struct AppConsumptionView: View {
                                 .foregroundColor(.orange)
                         }
                         
-                        Text("Display, Speakers, PMIC, Radios & Fans")
+                        Text(String(format: "Display, Speakers, PMIC & Fans • Session: -%.2f%% total", totalPhysicalDrop))
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(.secondary)
                     }
@@ -393,12 +421,12 @@ private struct SystemBaselineCardView: View {
                 
                 HStack(spacing: 2) {
                     if batteryDrop >= 0.005 {
-                        Text(String(format: "-%.2f%%", batteryDrop))
+                        Text(String(format: "-%.2f%% total", batteryDrop))
                             .font(.caption2)
                             .fontWeight(.bold)
                             .foregroundColor(.orange)
                     } else {
-                        Text("< 0.01%")
+                        Text("< 0.01% total")
                             .font(.caption2)
                             .fontWeight(.bold)
                             .foregroundColor(.orange)
@@ -488,17 +516,17 @@ private struct TopAppCardView: View {
                 
                 HStack(spacing: 2) {
                     if app.batteryPercentConsumed >= 0.005 {
-                        Text(String(format: "-%.2f%%", app.batteryPercentConsumed))
+                        Text(String(format: "-%.2f%% total", app.batteryPercentConsumed))
                             .font(.caption2)
                             .fontWeight(.bold)
                             .foregroundColor(.orange)
                     } else if app.batteryPercentConsumed > 0.0001 {
-                        Text("< 0.01%")
+                        Text("< 0.01% total")
                             .font(.caption2)
                             .fontWeight(.bold)
                             .foregroundColor(.orange)
                     } else {
-                        Text("0.0%")
+                        Text("0.0% total")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -558,10 +586,17 @@ private struct ComponentCardView: View {
                     .foregroundColor(.primary)
                 
                 HStack(spacing: 2) {
-                    Text(String(format: "-%.2f%%", comp.batteryPercentConsumed))
-                        .font(.caption2)
-                        .fontWeight(.bold)
-                        .foregroundColor(.orange)
+                    if comp.batteryPercentConsumed >= 0.005 {
+                        Text(String(format: "-%.2f%% total", comp.batteryPercentConsumed))
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.orange)
+                    } else {
+                        Text("< 0.01% total")
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.orange)
+                    }
                     Text(String(format: "(%.0f%%)", comp.sharePercentage))
                         .font(.caption2)
                         .foregroundColor(.secondary)
