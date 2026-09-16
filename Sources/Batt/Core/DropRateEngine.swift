@@ -90,6 +90,11 @@ public final class DropRateEngine: @unchecked Sendable {
     }
     
     private func sendSystemSpikeNotification(alert: BatterySpikeAlert) {
+        guard Bundle.main.bundleIdentifier != nil else {
+            print("[Batt] Running outside an app bundle; suppressing notification.")
+            return
+        }
+        
         let content = UNMutableNotificationContent()
         content.title = "⚠️ High Battery Drop Rate Detected"
         let appStr = alert.topAppNames.isEmpty ? "High system workload" : alert.topAppNames.prefix(3).joined(separator: ", ")

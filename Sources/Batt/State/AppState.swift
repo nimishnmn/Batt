@@ -73,6 +73,10 @@ public final class AppState: ObservableObject {
     }
     
     public func requestNotificationPermissions() {
+        guard Bundle.main.bundleIdentifier != nil else {
+            print("[Batt] Running outside an app bundle (e.g. swift run); notifications disabled.")
+            return
+        }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if let error = error {
                 print("Notification permission error: \(error.localizedDescription)")

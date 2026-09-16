@@ -1,27 +1,24 @@
-import Testing
+import XCTest
 import Foundation
 @testable import Batt
 
-@Suite("Batt Core Telemetry & Math Tests")
-struct BattTests {
+final class BattTests: XCTestCase {
 
-    @Test("Raw battery percentage computation with precision")
     func testRawBatteryPercentage() {
         let rawCurrent = 6265
         let rawMax = 8043
         let rawPercent = (Double(rawCurrent) / Double(rawMax)) * 100.0
         
         // 6265 / 8043 = 77.8938%
-        #expect(abs(rawPercent - 77.8938) < 0.01)
+        XCTAssertTrue(abs(rawPercent - 77.8938) < 0.01)
         
         let formatted1 = UnitsFormatter.formatPercentage(rawPercent, decimals: 1)
-        #expect(formatted1 == "77.9%")
+        XCTAssertEqual(formatted1, "77.9%")
         
         let formatted2 = UnitsFormatter.formatPercentage(rawPercent, decimals: 2)
-        #expect(formatted2 == "77.89%")
+        XCTAssertEqual(formatted2, "77.89%")
     }
 
-    @Test("Instantaneous drop rate calculation in %/hour and Watts")
     func testDropRateCalculations() {
         let rawMax = 8043
         let instantAmperage = -762 // negative when discharging
@@ -29,11 +26,11 @@ struct BattTests {
         
         // Drop rate per hour = (762 / 8043) * 100% = 9.474% / hour
         let dropRatePerHour = (Double(abs(instantAmperage)) / Double(rawMax)) * 100.0
-        #expect(abs(dropRatePerHour - 9.474) < 0.01)
+        XCTAssertTrue(abs(dropRatePerHour - 9.474) < 0.01)
         
         // Instantaneous power (Watts) = (12251 * -762) / 1,000,000 = -9.335 W
         let watts = (Double(voltageMillivolts) * Double(instantAmperage)) / 1_000_000.0
-        #expect(abs(watts - (-9.335)) < 0.01)
+        XCTAssertTrue(abs(watts - (-9.335)) < 0.01)
         
         // Units formatting
         let formattedRate = DropRateUnit.percentPerHour.format(
@@ -41,66 +38,61 @@ struct BattTests {
             dischargeWatts: abs(watts),
             dischargeMilliamps: abs(instantAmperage)
         )
-        #expect(formattedRate == "9.47 %/hr")
+        XCTAssertEqual(formattedRate, "9.47 %/hr")
         
         let formattedMinRate = DropRateUnit.percentPerMinute.format(
             ratePerHour: dropRatePerHour,
             dischargeWatts: abs(watts),
             dischargeMilliamps: abs(instantAmperage)
         )
-        #expect(formattedMinRate == "0.158 %/min")
+        XCTAssertEqual(formattedMinRate, "0.158 %/min")
     }
 
-    @Test("Multi-unit energy conversions")
     func testEnergyUnits() {
         let mWh = 12000.0 // 12 Wh
         let voltage = 12.0 // Volts
         
         let whStr = EnergyUnit.wattHours.format(mWh: mWh, voltageVolts: voltage)
-        #expect(whStr == "12.00 Wh")
+        XCTAssertEqual(whStr, "12.00 Wh")
         
         let mahStr = EnergyUnit.milliampereHours.format(mWh: mWh, voltageVolts: voltage)
-        #expect(mahStr == "1000 mAh")
+        XCTAssertEqual(mahStr, "1000 mAh")
         
         let jStr = EnergyUnit.joules.format(mWh: mWh, voltageVolts: voltage)
-        #expect(jStr == "43200 J") // 12 Wh * 3600 = 43200 J
+        XCTAssertEqual(jStr, "43200 J") // 12 Wh * 3600 = 43200 J
     }
 
-    @Test("Power unit conversions")
     func testPowerUnits() {
         let watts = 9.35
-        #expect(PowerUnit.watts.format(watts: watts) == "9.35 W")
-        #expect(PowerUnit.milliwatts.format(watts: watts) == "9350 mW")
+        XCTAssertEqual(PowerUnit.watts.format(watts: watts), "9.35 W")
+        XCTAssertEqual(PowerUnit.milliwatts.format(watts: watts), "9350 mW")
     }
 
-    @Test("Battery snapshot generation from IORegistry")
     func testLiveSnapshotFetch() {
         let monitor = BatteryMonitor.shared
         let snapshot = monitor.fetchSnapshot()
         
-        #expect(snapshot != nil)
+        XCTAssertNotNil(snapshot)
         if let snap = snapshot {
-            #expect(snap.rawPercentage >= 0.0 && snap.rawPercentage <= 100.0)
-            #expect(snap.voltageMillivolts > 5000) // Laptop packs > 5V
-            #expect(snap.rawMaxCapacity > 1000)
-            #expect(snap.cycleCount >= 0)
+            XCTAssertTrue(snap.rawPercentage >= 0.0 && snap.rawPercentage <= 100.0)
+            XCTAssertTrue(snap.voltageMillivolts > 5000) // Laptop packs > 5V
+            XCTAssertTrue(snap.rawMaxCapacity > 1000)
+            XCTAssertTrue(snap.cycleCount >= 0)
         }
     }
 
-    @Test("Live responsiveness to display brightness delta")
     func testBrightnessDeltaResponsiveness() {
         let monitor = BatteryMonitor.shared
         guard let snap = monitor.fetchSnapshot() else { return }
         
-        #expect(snap.rawMaxCapacity > 0)
-        #expect(snap.voltageMillivolts > 0)
+        XCTAssertTrue(snap.rawMaxCapacity > 0)
+        XCTAssertTrue(snap.voltageMillivolts > 0)
         if !snap.isCharging {
-            #expect(snap.instantPowerWatts < 0)
-            #expect(snap.instantDropRatePerHour > 0)
+            XCTAssertTrue(snap.instantPowerWatts < 0)
+            XCTAssertTrue(snap.instantDropRatePerHour > 0)
         }
     }
 
-    @Test("7-day retention pruning in HistoryStore")
     func testHistoryRetention() {
         let store = HistoryStore.shared
         
@@ -156,6 +148,6 @@ struct BattTests {
         let snapshots = store.getSnapshots()
         let cutoff = Date().addingTimeInterval(-store.maxAgeSeconds)
         let hasOld = snapshots.contains { $0.timestamp < cutoff }
-        #expect(!hasOld)
+        XCTAssertFalse(hasOld)
     }
 }
